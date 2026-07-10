@@ -1,8 +1,10 @@
 require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
@@ -24,10 +26,9 @@ connectDB();
 
 const app = express();
 
-// Middleware
-// CLIENT_URL can be a comma-separated list, e.g. "http://localhost:3000,http://localhost:3001"
-// In development, any http://localhost:<port> origin is also allowed automatically, since Vite
-// picks a different port whenever the preferred one is already in use.
+
+// ================= MIDDLEWARE =================
+
 const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000')
   .split(',')
   .map((url) => url.trim());
@@ -35,47 +36,91 @@ const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000')
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin) return callback(null, true); // non-browser requests (curl, Postman, etc.)
+      if (!origin) return callback(null, true);
+
       const isAllowed =
         allowedOrigins.includes(origin) ||
-        (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin));
+        (process.env.NODE_ENV !== 'production' &&
+          /^http:\/\/localhost:\d+$/.test(origin));
+
       if (isAllowed) return callback(null, true);
+
       callback(new Error(`CORS blocked for origin: ${origin}`));
     },
     credentials: true,
   })
 );
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
+
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Health check
+
+// ================= HEALTH CHECK =================
+
 app.get('/api/health', (req, res) => {
-  res.json({ success: true, message: 'Smart CRM API is running' });
+  res.json({
+    success: true,
+    message: 'Smart CRM API is running',
+  });
 });
 
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/customers', customerRoutes);
-app.use('/api/leads', leadRoutes);
-app.use('/api/followups', followUpRoutes);
-app.use('/api/dashboard', dashboardRoutes);
-app.use('/api/search', searchRoutes);
-app.use('/api/calls', callHistoryRoutes);
-app.use('/api/emails', emailRoutes);
-app.use('/api/whatsapp', whatsappRoutes);
-app.use('/api/events', eventRoutes);
-app.use('/api/reports', reportRoutes);
 
-// Error handling (must be last)
+// ================= ROUTES =================
+
+// Auth
+app.use(['/api/auth', '/auth'], authRoutes);
+
+// Users
+app.use(['/api/users', '/users'], userRoutes);
+
+// Customers
+app.use(['/api/customers', '/customers'], customerRoutes);
+
+// Leads
+app.use(['/api/leads', '/leads'], leadRoutes);
+
+// Followups
+app.use(['/api/followups', '/followups'], followUpRoutes);
+
+// Dashboard
+app.use(['/api/dashboard', '/dashboard'], dashboardRoutes);
+
+// Search
+app.use(['/api/search', '/search'], searchRoutes);
+
+// Calls
+app.use(['/api/calls', '/calls'], callHistoryRoutes);
+
+// Emails
+app.use(['/api/emails', '/emails'], emailRoutes);
+
+// WhatsApp
+app.use(['/api/whatsapp', '/whatsapp'], whatsappRoutes);
+
+// Events
+app.use(['/api/events', '/events'], eventRoutes);
+
+// Reports
+app.use(['/api/reports', '/reports'], reportRoutes);
+
+
+// ================= ERROR HANDLING =================
+
 app.use(notFound);
 app.use(errorHandler);
 
+
+// ================= SERVER =================
+
 const PORT = process.env.PORT || 5000;
+
 app.listen(PORT, () => {
-  console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+  console.log(
+    `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
+  );
 });

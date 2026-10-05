@@ -158,7 +158,7 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
         <p>This email confirms that the SmartCRM outgoing email pipeline is fully functional and delivering properly.</p>
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
         <ul style="line-height: 1.8; color: #475569;">
-          <li><strong>Relay Host:</strong> ${process.env.EMAIL_HOST || 'send.one.com'}:${result.port || process.env.EMAIL_PORT || '465'}</li>
+          <li><strong>Relay Host:</strong> ${process.env.EMAIL_HOST || 'send.one.com'} (Port: ${process.env.EMAIL_PORT || '465 / 2525'})</li>
           <li><strong>Authenticated Sender:</strong> ${process.env.EMAIL_USER || 'info@paymanent.com'}</li>
           <li><strong>Recipient:</strong> ${cleanRecipient}</li>
           <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>

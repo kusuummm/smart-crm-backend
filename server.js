@@ -38,7 +38,8 @@ app.use(
       if (!origin) return callback(null, true); // non-browser requests (curl, Postman, etc.)
       const isAllowed =
         allowedOrigins.includes(origin) ||
-        (process.env.NODE_ENV !== 'production' && /^http:\/\/localhost:\d+$/.test(origin));
+        /^http:\/\/localhost:\d+$/.test(origin) ||
+        /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
       if (isAllowed) return callback(null, true);
       callback(new Error(`CORS blocked for origin: ${origin}`));
     },

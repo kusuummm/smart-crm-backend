@@ -4,6 +4,12 @@ const Customer = require('../models/Customer');
 const sendEmail = require('../utils/sendEmail');
 const { sendWhatsAppText } = require('../utils/sendWhatsApp');
 
+const getTelecallerCustomerIds = async (user) => {
+  return await Customer.find({
+    $or: [{ telecallerId: user._id }, { assignedTelecaller: user.name }],
+  }).distinct('_id');
+};
+
 // @desc    Create an event/reminder
 // @route   POST /api/events
 // @access  Private
@@ -19,6 +25,15 @@ const createEvent = asyncHandler(async (req, res) => {
   if (!customer) {
     res.status(404);
     throw new Error('Customer not found');
+  }
+
+  if (req.user.role === 'telecaller') {
+    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                       customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('You can only create events for customers assigned to you');
+    }
   }
 
   const event = await Event.create({
@@ -38,10 +53,17 @@ const createEvent = asyncHandler(async (req, res) => {
 // @access  Private
 const getEvents = asyncHandler(async (req, res) => {
   const { type, status, page = 1, limit = 10 } = req.query;
-  const filter = {};
+  const conditions = [];
 
-  if (type) filter.type = type;
-  if (status) filter.status = status;
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({ customerId: { $in: customerIds } });
+  }
+
+  if (type) conditions.push({ type });
+  if (status) conditions.push({ status });
+
+  const filter = conditions.length > 0 ? { $and: conditions } : {};
 
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
@@ -76,10 +98,17 @@ const getUpcomingEvents = asyncHandler(async (req, res) => {
   const todayStr = today.toISOString().split('T')[0];
   const futureStr = future.toISOString().split('T')[0];
 
-  const events = await Event.find({
-    status: 'upcoming',
-    date: { $gte: todayStr, $lte: futureStr },
-  }).sort({ date: 1 });
+  const conditions = [
+    { status: 'upcoming' },
+    { date: { $gte: todayStr, $lte: futureStr } },
+  ];
+
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({ customerId: { $in: customerIds } });
+  }
+
+  const events = await Event.find({ $and: conditions }).sort({ date: 1 });
 
   res.json({ success: true, count: events.length, events });
 });
@@ -92,6 +121,14 @@ const updateEvent = asyncHandler(async (req, res) => {
   if (!event) {
     res.status(404);
     throw new Error('Event not found');
+  }
+
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    if (!customerIds.some(id => String(id) === String(event.customerId))) {
+      res.status(403);
+      throw new Error('Access denied to update event for unassigned customer');
+    }
   }
 
   Object.assign(event, req.body);
@@ -157,6 +194,14 @@ const deleteEvent = asyncHandler(async (req, res) => {
   if (!event) {
     res.status(404);
     throw new Error('Event not found');
+  }
+
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    if (!customerIds.some(id => String(id) === String(event.customerId))) {
+      res.status(403);
+      throw new Error('Access denied to delete event for unassigned customer');
+    }
   }
 
   await event.deleteOne();

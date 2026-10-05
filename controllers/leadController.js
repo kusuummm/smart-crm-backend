@@ -1,12 +1,12 @@
 const asyncHandler = require('express-async-handler');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
+const { escapeRegex } = require('../utils/regexHelper');
 
-const scopeToRole = (req, filter = {}) => {
-  if (req.user.role === 'telecaller') {
-    filter.telecallerId = req.user._id;
-  }
-  return filter;
+const getTelecallerCustomerIds = async (user) => {
+  return await Customer.find({
+    $or: [{ telecallerId: user._id }, { assignedTelecaller: user.name }],
+  }).distinct('_id');
 };
 
 // @desc    Create a lead for a customer
@@ -19,6 +19,15 @@ const createLead = asyncHandler(async (req, res) => {
   if (!customer) {
     res.status(404);
     throw new Error('Customer not found');
+  }
+
+  if (req.user.role === 'telecaller') {
+    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                       customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('You can only create leads for customers assigned to you');
+    }
   }
 
   const lead = await Lead.create({
@@ -37,10 +46,53 @@ const createLead = asyncHandler(async (req, res) => {
 // @access  Private
 const getLeads = asyncHandler(async (req, res) => {
   const { status, search, page = 1, limit = 10 } = req.query;
-  const filter = scopeToRole(req);
+  const conditions = [];
 
-  if (status) filter.status = status;
-  if (search) filter.customerName = new RegExp(search, 'i');
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({
+      $or: [
+        { telecallerId: req.user._id },
+        { customerId: { $in: customerIds } },
+      ],
+    });
+  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
+    if (req.query.telecallerId === 'unassigned') {
+      const unassignedCustIds = await Customer.find({
+        $or: [
+          { telecallerId: null, assignedTelecaller: null },
+          { telecallerId: { $exists: false }, assignedTelecaller: { $exists: false } },
+          { assignedTelecaller: '' },
+          { assignedTelecaller: 'Unassigned' },
+        ],
+      }).distinct('_id');
+      conditions.push({
+        $or: [
+          { telecallerId: null },
+          { telecallerId: { $exists: false } },
+          { customerId: { $in: unassignedCustIds } },
+        ],
+      });
+    } else {
+      const customerIds = await Customer.find({
+        $or: [{ telecallerId: req.query.telecallerId }],
+      }).distinct('_id');
+      conditions.push({
+        $or: [
+          { telecallerId: req.query.telecallerId },
+          { customerId: { $in: customerIds } },
+        ],
+      });
+    }
+  }
+
+  if (status) conditions.push({ status });
+  if (search) {
+    const regex = new RegExp(escapeRegex(search.trim()), 'i');
+    conditions.push({ customerName: regex });
+  }
+
+  const filter = conditions.length > 0 ? { $and: conditions } : {};
 
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
@@ -67,13 +119,23 @@ const getLeads = asyncHandler(async (req, res) => {
 // @route   GET /api/leads/:id
 // @access  Private
 const getLeadById = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const lead = await Lead.findOne(filter);
+  const lead = await Lead.findById(req.params.id);
 
   if (!lead) {
     res.status(404);
     throw new Error('Lead not found');
   }
+
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
+                    customerIds.some(id => String(id) === String(lead.customerId));
+    if (!isOwner) {
+      res.status(403);
+      throw new Error('Access denied to lead not assigned to your accounts');
+    }
+  }
+
   res.json({ success: true, lead });
 });
 
@@ -87,15 +149,27 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
     throw new Error('Status is required');
   }
 
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const lead = await Lead.findOne(filter);
+  const lead = await Lead.findById(req.params.id);
 
   if (!lead) {
     res.status(404);
     throw new Error('Lead not found');
   }
 
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
+                    customerIds.some(id => String(id) === String(lead.customerId));
+    if (!isOwner) {
+      res.status(403);
+      throw new Error('Access denied to lead not assigned to your accounts');
+    }
+  }
+
   lead.status = status;
+  if (req.user.role === 'admin' && req.body.telecallerId !== undefined) {
+    lead.telecallerId = req.body.telecallerId ? req.body.telecallerId : null;
+  }
   lead.history.push({ status, date: new Date(), remark: remark || '', updatedBy: req.user._id });
   await lead.save();
 
@@ -104,10 +178,14 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
 
 // @desc    Delete a lead
 // @route   DELETE /api/leads/:id
-// @access  Private
+// @access  Private/Admin
 const deleteLead = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const lead = await Lead.findOne(filter);
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can delete leads');
+  }
+
+  const lead = await Lead.findById(req.params.id);
 
   if (!lead) {
     res.status(404);

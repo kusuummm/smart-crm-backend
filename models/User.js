@@ -6,7 +6,7 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 4, select: false },
-    role: { type: String, enum: ['admin', 'telecaller'], default: 'telecaller' },
+    role: { type: String, enum: ['admin', 'telecaller', 'user'], default: 'user' },
     avatar: { type: String, default: '' }, // initials, e.g. "JS"
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },
     phone: { type: String, default: '' },
@@ -28,11 +28,10 @@ userSchema.pre('save', function (next) {
 });
 
 // Hash password before saving, only if it was modified
-userSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
+userSchema.pre('save', async function () {
+  if (!this.isModified('password')) return;
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
-  next();
 });
 
 // Instance method to compare plaintext password with hashed password

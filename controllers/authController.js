@@ -148,7 +148,7 @@ const changePassword = asyncHandler(async (req, res) => {
   const isMatch = await user.matchPassword(currentPassword);
 
   if (!isMatch) {
-    res.status(401);
+    res.status(400);
     throw new Error('Current password is incorrect');
   }
 

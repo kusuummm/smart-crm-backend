@@ -2,11 +2,10 @@ const asyncHandler = require('express-async-handler');
 const CallHistory = require('../models/CallHistory');
 const Customer = require('../models/Customer');
 
-const scopeToRole = (req, filter = {}) => {
-  if (req.user.role === 'telecaller') {
-    filter.calledBy = req.user._id;
-  }
-  return filter;
+const getTelecallerCustomerIds = async (user) => {
+  return await Customer.find({
+    $or: [{ telecallerId: user._id }, { assignedTelecaller: user.name }],
+  }).distinct('_id');
 };
 
 // @desc    Log a call record
@@ -26,6 +25,15 @@ const createCall = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
+  if (req.user.role === 'telecaller') {
+    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                       customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('You can only log calls for customers assigned to you');
+    }
+  }
+
   const call = await CallHistory.create({
     customerId,
     customerName: customer.name,
@@ -35,6 +43,7 @@ const createCall = asyncHandler(async (req, res) => {
     status,
     remarks,
     calledBy: req.user._id,
+    calledByName: req.user.name,
   });
 
   res.status(201).json({ success: true, call });
@@ -45,11 +54,25 @@ const createCall = asyncHandler(async (req, res) => {
 // @access  Private
 const getCalls = asyncHandler(async (req, res) => {
   const { status, date, customerId, page = 1, limit = 10 } = req.query;
-  const filter = scopeToRole(req);
+  const conditions = [];
 
-  if (status) filter.status = status;
-  if (date) filter.date = date;
-  if (customerId) filter.customerId = customerId;
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({
+      $or: [
+        { calledBy: req.user._id },
+        { customerId: { $in: customerIds } },
+      ],
+    });
+  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
+    conditions.push({ calledBy: req.query.telecallerId });
+  }
+
+  if (status) conditions.push({ status });
+  if (date) conditions.push({ date });
+  if (customerId) conditions.push({ customerId });
+
+  const filter = conditions.length > 0 ? { $and: conditions } : {};
 
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
@@ -76,12 +99,21 @@ const getCalls = asyncHandler(async (req, res) => {
 // @route   PUT /api/calls/:id
 // @access  Private
 const updateCall = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const call = await CallHistory.findOne(filter);
+  const call = await CallHistory.findById(req.params.id);
 
   if (!call) {
     res.status(404);
     throw new Error('Call record not found');
+  }
+
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    const hasAccess = String(call.calledBy) === String(req.user._id) ||
+                      customerIds.some(id => String(id) === String(call.customerId));
+    if (!hasAccess) {
+      res.status(403);
+      throw new Error('Access denied to update this call record');
+    }
   }
 
   Object.assign(call, req.body);
@@ -92,10 +124,14 @@ const updateCall = asyncHandler(async (req, res) => {
 
 // @desc    Delete a call record
 // @route   DELETE /api/calls/:id
-// @access  Private
+// @access  Private/Admin
 const deleteCall = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const call = await CallHistory.findOne(filter);
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can delete call history records');
+  }
+
+  const call = await CallHistory.findById(req.params.id);
 
   if (!call) {
     res.status(404);

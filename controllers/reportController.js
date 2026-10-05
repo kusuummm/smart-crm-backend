@@ -3,6 +3,7 @@ const FollowUp = require('../models/FollowUp');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
+const CallHistory = require('../models/CallHistory');
 const { buildExcelBuffer, buildCsv } = require('../utils/exportHelper');
 
 // Shared helper: sends report rows either as JSON, or as a downloadable
@@ -152,10 +153,11 @@ const telecallerPerformanceReport = asyncHandler(async (req, res) => {
 
   const rows = await Promise.all(
     telecallers.map(async (tc) => {
-      const [customerCount, leadsConverted, followUpsCompleted] = await Promise.all([
-        Customer.countDocuments({ telecallerId: tc._id }),
+      const [customerCount, leadsConverted, followUpsCompleted, callsMade] = await Promise.all([
+        Customer.countDocuments({ $or: [{ telecallerId: tc._id }, { assignedTelecaller: tc.name }] }),
         Lead.countDocuments({ telecallerId: tc._id, status: 'converted' }),
         FollowUp.countDocuments({ createdBy: tc._id, status: 'completed' }),
+        CallHistory.countDocuments({ calledBy: tc._id }),
       ]);
 
       return {
@@ -165,6 +167,7 @@ const telecallerPerformanceReport = asyncHandler(async (req, res) => {
         customersHandled: customerCount,
         leadsConverted,
         followUpsCompleted,
+        callsMade,
       };
     })
   );
@@ -176,6 +179,7 @@ const telecallerPerformanceReport = asyncHandler(async (req, res) => {
     { header: 'Customers Handled', key: 'customersHandled', width: 18 },
     { header: 'Leads Converted', key: 'leadsConverted', width: 16 },
     { header: 'Follow-ups Completed', key: 'followUpsCompleted', width: 20 },
+    { header: 'Calls Logged', key: 'callsMade', width: 16 },
   ];
 
   await respondWithReport(res, {

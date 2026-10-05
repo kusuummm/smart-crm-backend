@@ -3,11 +3,10 @@ const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
 const sendEmail = require('../utils/sendEmail');
 
-const scopeToRole = (req, filter = {}) => {
-  if (req.user.role === 'telecaller') {
-    filter.sentBy = req.user._id;
-  }
-  return filter;
+const getTelecallerCustomerIds = async (user) => {
+  return await Customer.find({
+    $or: [{ telecallerId: user._id }, { assignedTelecaller: user.name }],
+  }).distinct('_id');
 };
 
 // Built-in templates for welcome / follow-up / offer emails.
@@ -22,7 +21,7 @@ const TEMPLATES = {
     body: `Hi ${customer.name},\n\nJust checking in regarding our recent conversation. Please let us know if you have any questions.\n\nBest regards,\nSmartCRM Team`,
   }),
   offer: (customer) => ({
-    subject: 'Special Offer Just For You',
+    subject: `Exclusive Update for ${customer.name} - SmartCRM`,
     body: `Dear ${customer.name},\n\nWe have an exclusive offer available for you. Reach out to learn more!\n\nBest regards,\nSmartCRM Team`,
   }),
 };
@@ -38,6 +37,16 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
     res.status(404);
     throw new Error('Customer not found');
   }
+
+  if (req.user.role === 'telecaller') {
+    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                       customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('You can only send emails to customers assigned to you');
+    }
+  }
+
   if (!customer.email) {
     res.status(400);
     throw new Error('This customer has no email address on file');
@@ -77,11 +86,23 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
 // @access  Private
 const getEmailLogs = asyncHandler(async (req, res) => {
   const { type, status, customerId, page = 1, limit = 10 } = req.query;
-  const filter = scopeToRole(req);
+  const conditions = [];
 
-  if (type) filter.type = type;
-  if (status) filter.status = status;
-  if (customerId) filter.customerId = customerId;
+  if (req.user.role === 'telecaller') {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({
+      $or: [
+        { sentBy: req.user._id },
+        { customerId: { $in: customerIds } },
+      ],
+    });
+  }
+
+  if (type) conditions.push({ type });
+  if (status) conditions.push({ status });
+  if (customerId) conditions.push({ customerId });
+
+  const filter = conditions.length > 0 ? { $and: conditions } : {};
 
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
@@ -104,4 +125,45 @@ const getEmailLogs = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { sendCustomerEmail, getEmailLogs };
+// @desc    Send test email to verify SMTP deliverability (Admin only)
+// @route   POST /api/emails/test
+// @access  Private/Admin
+const testEmailDelivery = asyncHandler(async (req, res) => {
+  const { recipientEmail } = req.body;
+
+  if (!recipientEmail) {
+    res.status(400);
+    throw new Error('recipientEmail is required');
+  }
+
+  const result = await sendEmail({
+    to: recipientEmail,
+    subject: `SmartCRM Deliverability Test — ${new Date().toLocaleTimeString()}`,
+    html: `
+      <div style="font-family: sans-serif; padding: 20px; color: #1e293b;">
+        <h2 style="color: #2563eb;">SmartCRM SMTP Deliverability Test Passed!</h2>
+        <p>This email confirms that the SmartCRM outgoing email pipeline is fully functional and delivering properly.</p>
+        <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
+        <ul style="line-height: 1.8; color: #475569;">
+          <li><strong>Relay Host:</strong> send.one.com:587</li>
+          <li><strong>Authenticated Sender:</strong> info@paymanent.com</li>
+          <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
+        </ul>
+        <p style="color: #16a34a; font-weight: bold;">✔ All SMTP authentication checks passed.</p>
+      </div>
+    `,
+  });
+
+  if (!result.success) {
+    res.status(500);
+    throw new Error(result.error || 'SMTP delivery failed. Check credentials in .env.');
+  }
+
+  res.json({
+    success: true,
+    message: `Test email successfully dispatched to ${recipientEmail} via one.com!`,
+  });
+});
+
+module.exports = { sendCustomerEmail, getEmailLogs, testEmailDelivery };
+

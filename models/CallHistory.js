@@ -10,6 +10,7 @@ const callHistorySchema = new mongoose.Schema(
     status: { type: String, enum: ['connected', 'missed', 'busy'], default: 'connected' },
     remarks: { type: String, default: '' },
     calledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    calledByName: { type: String, default: '' },
   },
   { timestamps: true }
 );

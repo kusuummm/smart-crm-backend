@@ -2,21 +2,21 @@ const asyncHandler = require('express-async-handler');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const Lead = require('../models/Lead');
+const FollowUp = require('../models/FollowUp');
+const CallHistory = require('../models/CallHistory');
+const { escapeRegex } = require('../utils/regexHelper');
 
-// Telecallers only see customers assigned to them; admins see everything.
+// Standard users only see customers assigned to them; admins see everything.
 const scopeToRole = (req, filter = {}) => {
-  if (req.user.role === 'telecaller') {
-    filter.telecallerId = req.user._id;
+  if (req.user.role !== 'admin') {
+    filter.$or = [
+      { telecallerId: req.user._id },
+      { assignedTelecaller: req.user.name },
+    ];
   }
   return filter;
 };
 
-// The frontend form leaves optional dropdowns (leadSource, telecallerId) as an
-// empty string ('') until the user picks a value. An empty string is not a
-// valid ObjectId and not a valid enum value, so sending it straight to
-// Mongoose throws a ValidationError and the customer never gets saved.
-// Strip those out here so "left blank" is treated as "not set" and the
-// schema defaults (Other / null) kick in instead.
 const sanitizeCustomerPayload = (payload) => {
   const cleaned = { ...payload };
   if (cleaned.telecallerId === '') delete cleaned.telecallerId;
@@ -36,8 +36,7 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const payload = sanitizeCustomerPayload(req.body);
 
-  // If a telecaller is creating the customer, auto-assign to themselves.
-  if (req.user.role === 'telecaller') {
+  if (req.user.role !== 'admin') {
     payload.telecallerId = req.user._id;
     payload.assignedTelecaller = req.user.name;
   } else if (payload.telecallerId) {
@@ -47,8 +46,6 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const customer = await Customer.create(payload);
 
-  // Every new customer starts a lead in the pipeline (status 'new'), so the
-  // Leads module always has something to track without a separate manual step.
   await Lead.create({
     customerId: customer._id,
     customerName: customer.name,
@@ -61,21 +58,63 @@ const createCustomer = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get customers with search, filter, sorting, pagination
-// @route   GET /api/customers?search=&city=&source=&status=&page=1&limit=10&sortBy=name&sortOrder=asc
+// @route   GET /api/customers
 // @access  Private
 const getCustomers = asyncHandler(async (req, res) => {
-  const { search, city, source, status, page = 1, limit = 10, sortBy = 'createdAt', sortOrder = 'desc' } = req.query;
+  const {
+    search,
+    city,
+    source,
+    status,
+    telecallerId,
+    assignedTelecaller,
+    unassigned,
+    page = 1,
+    limit = 10,
+    sortBy = 'createdAt',
+    sortOrder = 'desc',
+  } = req.query;
 
-  const filter = scopeToRole(req);
+  const conditions = [];
 
-  if (city) filter.city = new RegExp(city, 'i');
-  if (source) filter.leadSource = source;
-  if (status) filter.status = status;
+  if (req.user.role !== 'admin') {
+    conditions.push({
+      $or: [
+        { telecallerId: req.user._id },
+        { assignedTelecaller: req.user.name },
+      ],
+    });
+  } else {
+    // Admin filtering controls
+    if (unassigned === 'true' || telecallerId === 'unassigned') {
+      conditions.push({
+        $or: [
+          { telecallerId: null },
+          { telecallerId: { $exists: false } },
+          { assignedTelecaller: 'Unassigned' },
+          { assignedTelecaller: '' },
+          { assignedTelecaller: null },
+        ],
+      });
+    } else if (telecallerId) {
+      conditions.push({ telecallerId });
+    } else if (assignedTelecaller) {
+      conditions.push({ assignedTelecaller });
+    }
+  }
+
+  if (city) conditions.push({ city: new RegExp(escapeRegex(city.trim()), 'i') });
+  if (source) conditions.push({ leadSource: source });
+  if (status) conditions.push({ status });
 
   if (search) {
-    const regex = new RegExp(search, 'i');
-    filter.$or = [{ name: regex }, { mobile: regex }, { email: regex }, { company: regex }, { city: regex }];
+    const regex = new RegExp(escapeRegex(search.trim()), 'i');
+    conditions.push({
+      $or: [{ name: regex }, { mobile: regex }, { email: regex }, { company: regex }, { city: regex }],
+    });
   }
+
+  const filter = conditions.length > 0 ? { $and: conditions } : {};
 
   const pageNum = Math.max(parseInt(page, 10) || 1, 1);
   const limitNum = Math.max(parseInt(limit, 10) || 10, 1);
@@ -108,7 +147,7 @@ const getCustomerById = asyncHandler(async (req, res) => {
 
   if (!customer) {
     res.status(404);
-    throw new Error('Customer not found');
+    throw new Error('Customer not found or not assigned to your account');
   }
   res.json({ success: true, customer });
 });
@@ -122,15 +161,22 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
   if (!customer) {
     res.status(404);
-    throw new Error('Customer not found');
+    throw new Error('Customer not found or not assigned to your account');
   }
 
   const updates = sanitizeCustomerPayload(req.body);
 
-  // If admin reassigns the telecaller, keep the denormalized name in sync.
-  if (updates.telecallerId) {
+  if (req.user.role !== 'admin') {
+    delete updates.telecallerId;
+    delete updates.assignedTelecaller;
+  } else if (updates.telecallerId) {
     const tc = await User.findById(updates.telecallerId);
     if (tc) updates.assignedTelecaller = tc.name;
+    await Lead.updateMany({ customerId: customer._id }, { telecallerId: updates.telecallerId });
+  } else if (updates.telecallerId === null || req.body.unassign === true) {
+    updates.telecallerId = null;
+    updates.assignedTelecaller = 'Unassigned';
+    await Lead.updateMany({ customerId: customer._id }, { telecallerId: null });
   }
 
   Object.assign(customer, updates);
@@ -141,10 +187,14 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
 // @desc    Delete a customer
 // @route   DELETE /api/customers/:id
-// @access  Private
+// @access  Private/Admin
 const deleteCustomer = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const customer = await Customer.findOne(filter);
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can delete customer records');
+  }
+
+  const customer = await Customer.findById(req.params.id);
 
   if (!customer) {
     res.status(404);
@@ -152,7 +202,98 @@ const deleteCustomer = asyncHandler(async (req, res) => {
   }
 
   await customer.deleteOne();
-  res.json({ success: true, message: 'Customer deleted successfully' });
+  await Promise.all([
+    Lead.deleteMany({ customerId: customer._id }),
+    FollowUp.deleteMany({ customerId: customer._id }),
+    CallHistory.deleteMany({ customerId: customer._id }),
+  ]);
+  res.json({ success: true, message: 'Customer and associated records deleted successfully' });
 });
 
-module.exports = { createCustomer, getCustomers, getCustomerById, updateCustomer, deleteCustomer };
+// @desc    Bulk assign multiple customers
+// @route   POST /api/customers/bulk-assign
+// @access  Private/Admin
+const bulkAssignCustomers = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can bulk assign customers');
+  }
+
+  const { customerIds, telecallerId } = req.body;
+
+  if (!customerIds || !Array.isArray(customerIds) || customerIds.length === 0) {
+    res.status(400);
+    throw new Error('customerIds array is required');
+  }
+
+  let assignedTelecaller = 'Unassigned';
+  let targetUserId = null;
+
+  if (telecallerId && telecallerId !== 'unassigned') {
+    const targetUser = await User.findById(telecallerId);
+    if (!targetUser) {
+      res.status(404);
+      throw new Error('Target telecaller user not found');
+    }
+    assignedTelecaller = targetUser.name;
+    targetUserId = targetUser._id;
+  }
+
+  const [customerResult, leadResult] = await Promise.all([
+    Customer.updateMany(
+      { _id: { $in: customerIds } },
+      { $set: { telecallerId: targetUserId, assignedTelecaller } }
+    ),
+    Lead.updateMany(
+      { customerId: { $in: customerIds } },
+      { $set: { telecallerId: targetUserId } }
+    ),
+  ]);
+
+  res.json({
+    success: true,
+    message: `Assigned ${customerResult.modifiedCount} customer(s) to ${assignedTelecaller}`,
+    modifiedCustomers: customerResult.modifiedCount,
+    modifiedLeads: leadResult.modifiedCount,
+  });
+});
+
+// @desc    Bulk delete multiple customers
+// @route   POST /api/customers/bulk-delete
+// @access  Private/Admin
+const bulkDeleteCustomers = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can bulk delete customers');
+  }
+
+  const { customerIds } = req.body;
+
+  if (!customerIds || !Array.isArray(customerIds) || customerIds.length === 0) {
+    res.status(400);
+    throw new Error('customerIds array is required');
+  }
+
+  const [customerResult] = await Promise.all([
+    Customer.deleteMany({ _id: { $in: customerIds } }),
+    Lead.deleteMany({ customerId: { $in: customerIds } }),
+    FollowUp.deleteMany({ customerId: { $in: customerIds } }),
+    CallHistory.deleteMany({ customerId: { $in: customerIds } }),
+  ]);
+
+  res.json({
+    success: true,
+    message: `Successfully deleted ${customerResult.deletedCount} customer(s) and associated records`,
+    deletedCount: customerResult.deletedCount,
+  });
+});
+
+module.exports = {
+  createCustomer,
+  getCustomers,
+  getCustomerById,
+  updateCustomer,
+  deleteCustomer,
+  bulkAssignCustomers,
+  bulkDeleteCustomers,
+};

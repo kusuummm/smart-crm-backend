@@ -59,12 +59,55 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 
-// ================= HEALTH CHECK =================
+// ================= HEALTH CHECK & NETWORK DIAGNOSTIC =================
 
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
     message: 'Smart CRM API is running',
+  });
+});
+
+app.get('/api/health/network', async (req, res) => {
+  const net = require('net');
+  const host = process.env.EMAIL_HOST || 'send.one.com';
+  const ports = [465, 587, 2525];
+  const results = {};
+
+  await Promise.all(
+    ports.map(
+      (port) =>
+        new Promise((resolve) => {
+          const socket = new net.Socket();
+          socket.setTimeout(5000);
+          socket.connect(port, host, () => {
+            results[port] = 'CONNECTED';
+            socket.destroy();
+            resolve();
+          });
+          socket.on('error', (err) => {
+            results[port] = `ERROR: ${err.message}`;
+            resolve();
+          });
+          socket.on('timeout', () => {
+            results[port] = 'TIMEOUT (BLOCKED by hosting platform firewall)';
+            socket.destroy();
+            resolve();
+          });
+        })
+    )
+  );
+
+  res.json({
+    host,
+    results,
+    configured: {
+      EMAIL_HOST: process.env.EMAIL_HOST,
+      EMAIL_PORT: process.env.EMAIL_PORT,
+      EMAIL_SECURE: process.env.EMAIL_SECURE,
+      EMAIL_USER: process.env.EMAIL_USER,
+      EMAIL_PASS: process.env.EMAIL_PASS ? 'SET (hidden)' : 'MISSING',
+    },
   });
 });
 

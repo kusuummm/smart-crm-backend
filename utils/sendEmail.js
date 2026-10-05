@@ -107,6 +107,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Nodemailer send error:', error);
+    transporter = null;
     return { success: false, error: error.message };
   }
 };

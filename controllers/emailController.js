@@ -52,9 +52,14 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
     throw new Error('This customer has no email address on file');
   }
 
+  if (customer.email.endsWith('@example.com')) {
+    res.status(400);
+    throw new Error('Customer email is a placeholder (example.com). Please edit the customer profile with a real recipient email address before sending.');
+  }
+
   const template = TEMPLATES[type] ? TEMPLATES[type](customer) : {};
   const finalSubject = subject || template.subject || 'Message from SmartCRM';
-  const finalBody = body || template.body || '';
+  const finalBody = body || template.body || 'Greetings from SmartCRM Solutions.';
 
   const result = await sendEmail({
     to: customer.email,

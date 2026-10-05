@@ -3,12 +3,14 @@ const nodemailer = require('nodemailer');
 // Creates a transporter instance configured for IPv4 and explicit timeouts.
 // Explicit IPv4 (family: 4) is critical on Windows/ISP environments to avoid
 // IPv6 connection hangs (which cause 2-minute "Connection timeout" errors).
-const createTransporter = () => {
-  const port = Number(process.env.EMAIL_PORT) || 465;
+const createTransporter = (customPort, customSecure) => {
+  const port = customPort !== undefined ? customPort : (Number(process.env.EMAIL_PORT) || 465);
   const isSecure =
-    process.env.EMAIL_SECURE !== undefined
-      ? process.env.EMAIL_SECURE === 'true'
-      : port === 465;
+    customSecure !== undefined
+      ? customSecure
+      : (process.env.EMAIL_SECURE !== undefined
+          ? process.env.EMAIL_SECURE === 'true'
+          : port === 465);
 
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'send.one.com',
@@ -19,9 +21,9 @@ const createTransporter = () => {
       pass: process.env.EMAIL_PASS,
     },
     family: 4,
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
+    connectionTimeout: 7000,
+    greetingTimeout: 7000,
+    socketTimeout: 12000,
   });
 };
 
@@ -91,24 +93,50 @@ const sendEmail = async ({ to, subject, html, text }) => {
       ?.trim() ||
     '';
 
-  const transporter = createTransporter();
+  const mailOptions = {
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
+    to,
+    replyTo: process.env.EMAIL_USER,
+    subject,
+    text: plainText,
+    html: finalHtml,
+    headers: {
+      'X-Mailer': 'SmartCRM Solutions',
+      'X-Priority': '3',
+    },
+  };
+
+  const primaryPort = Number(process.env.EMAIL_PORT) || 465;
+  const primarySecure =
+    process.env.EMAIL_SECURE !== undefined
+      ? process.env.EMAIL_SECURE === 'true'
+      : primaryPort === 465;
+
+  const transporter = createTransporter(primaryPort, primarySecure);
   try {
-    const info = await transporter.sendMail({
-      from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
-      to,
-      replyTo: process.env.EMAIL_USER,
-      subject,
-      text: plainText,
-      html: finalHtml,
-      headers: {
-        'X-Mailer': 'SmartCRM Solutions',
-        'X-Priority': '3',
-      },
-    });
-    return { success: true, messageId: info.messageId };
-  } catch (error) {
-    console.error('Nodemailer send error:', error);
-    return { success: false, error: error.message };
+    const info = await transporter.sendMail(mailOptions);
+    return { success: true, messageId: info.messageId, port: primaryPort };
+  } catch (primaryError) {
+    console.warn(`Primary email dispatch on port ${primaryPort} failed (${primaryError.message}).`);
+
+    // If port 465 or 587 was blocked (common on cloud hosting like Render free tier),
+    // automatically failover to port 2525 with STARTTLS!
+    if (primaryPort !== 2525) {
+      console.log('Attempting automatic failover to unblocked SMTP alternative port 2525...');
+      const fallbackTransporter = createTransporter(2525, false);
+      try {
+        const info = await fallbackTransporter.sendMail(mailOptions);
+        console.log(`Email successfully dispatched via port 2525 failover! Message ID: ${info.messageId}`);
+        return { success: true, messageId: info.messageId, port: 2525 };
+      } catch (fallbackError) {
+        console.error('Port 2525 fallback also failed:', fallbackError.message);
+        return { success: false, error: fallbackError.message };
+      } finally {
+        try { fallbackTransporter.close(); } catch (_) {}
+      }
+    }
+
+    return { success: false, error: primaryError.message };
   } finally {
     try {
       transporter.close();

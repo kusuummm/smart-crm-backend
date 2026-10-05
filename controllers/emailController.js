@@ -158,7 +158,7 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
         <p>This email confirms that the SmartCRM outgoing email pipeline is fully functional and delivering properly.</p>
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
         <ul style="line-height: 1.8; color: #475569;">
-          <li><strong>Relay Host:</strong> ${process.env.EMAIL_HOST || 'send.one.com'}:${process.env.EMAIL_PORT || '465'}</li>
+          <li><strong>Relay Host:</strong> ${process.env.EMAIL_HOST || 'send.one.com'}:${result.port || process.env.EMAIL_PORT || '465'}</li>
           <li><strong>Authenticated Sender:</strong> ${process.env.EMAIL_USER || 'info@paymanent.com'}</li>
           <li><strong>Recipient:</strong> ${cleanRecipient}</li>
           <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
@@ -173,7 +173,7 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
     customerName: 'Admin SMTP Test',
     email: cleanRecipient,
     subject: `SmartCRM Deliverability Test — ${new Date().toLocaleTimeString()}`,
-    body: 'Live SMTP Deliverability Verification dispatch.',
+    body: `Live SMTP Deliverability Verification dispatch via port ${result.port || 465}.`,
     type: 'general',
     status: result.success ? 'sent' : 'failed',
     error: result.error || '',
@@ -188,7 +188,7 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    message: `Test email successfully dispatched to ${cleanRecipient} via one.com! Please check your Inbox and Spam/Junk folder.`,
+    message: `Test email successfully dispatched to ${cleanRecipient} via one.com (port ${result.port || 465})! Please check your Inbox and Spam/Junk folder.`,
     messageId: result.messageId,
   });
 });

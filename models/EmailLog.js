@@ -9,6 +9,7 @@ const emailLogSchema = new mongoose.Schema(
     body: { type: String, default: '' },
     type: { type: String, enum: ['welcome', 'follow-up', 'offer', 'custom', 'reminder', 'general'], default: 'follow-up' },
     status: { type: String, enum: ['sent', 'delivered', 'read', 'failed'], default: 'sent' },
+    error: { type: String, default: '' },
     sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     sentByName: { type: String, default: '' },
   },

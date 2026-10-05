@@ -75,6 +75,7 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
     body: finalBody,
     type,
     status: result.success ? 'sent' : 'failed',
+    error: result.error || '',
     sentBy: req.user._id,
     sentByName: req.user.name,
   });

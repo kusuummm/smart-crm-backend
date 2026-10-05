@@ -52,9 +52,9 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
     throw new Error('This customer has no email address on file');
   }
 
-  if (customer.email.endsWith('@example.com')) {
+  if (customer.email.endsWith('@example.com') || customer.email.endsWith('@crm.com')) {
     res.status(400);
-    throw new Error('Customer email is a placeholder (example.com). Please edit the customer profile with a real recipient email address before sending.');
+    throw new Error('Customer email is a placeholder domain (@example.com / @crm.com). Please edit the customer profile with a real recipient email address before sending.');
   }
 
   const template = TEMPLATES[type] ? TEMPLATES[type](customer) : {};
@@ -137,13 +137,20 @@ const getEmailLogs = asyncHandler(async (req, res) => {
 const testEmailDelivery = asyncHandler(async (req, res) => {
   const { recipientEmail } = req.body;
 
-  if (!recipientEmail) {
+  if (!recipientEmail || !recipientEmail.trim() || !recipientEmail.includes('@')) {
     res.status(400);
-    throw new Error('recipientEmail is required');
+    throw new Error('A valid recipientEmail is required');
+  }
+
+  const cleanRecipient = recipientEmail.trim();
+
+  if (cleanRecipient.endsWith('@example.com') || cleanRecipient.endsWith('@crm.com')) {
+    res.status(400);
+    throw new Error('Cannot send test to a placeholder domain (@example.com or @crm.com). Please enter your real email address (e.g. Gmail or Outlook).');
   }
 
   const result = await sendEmail({
-    to: recipientEmail,
+    to: cleanRecipient,
     subject: `SmartCRM Deliverability Test — ${new Date().toLocaleTimeString()}`,
     html: `
       <div style="font-family: sans-serif; padding: 20px; color: #1e293b;">
@@ -151,8 +158,9 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
         <p>This email confirms that the SmartCRM outgoing email pipeline is fully functional and delivering properly.</p>
         <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 15px 0;" />
         <ul style="line-height: 1.8; color: #475569;">
-          <li><strong>Relay Host:</strong> send.one.com:587</li>
-          <li><strong>Authenticated Sender:</strong> info@paymanent.com</li>
+          <li><strong>Relay Host:</strong> ${process.env.EMAIL_HOST || 'send.one.com'}:${process.env.EMAIL_PORT || '465'}</li>
+          <li><strong>Authenticated Sender:</strong> ${process.env.EMAIL_USER || 'info@paymanent.com'}</li>
+          <li><strong>Recipient:</strong> ${cleanRecipient}</li>
           <li><strong>Timestamp:</strong> ${new Date().toISOString()}</li>
         </ul>
         <p style="color: #16a34a; font-weight: bold;">✔ All SMTP authentication checks passed.</p>
@@ -160,14 +168,28 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
     `,
   });
 
+  // Record into EmailLog so admin can see test dispatches in the email logs
+  await EmailLog.create({
+    customerName: 'Admin SMTP Test',
+    email: cleanRecipient,
+    subject: `SmartCRM Deliverability Test — ${new Date().toLocaleTimeString()}`,
+    body: 'Live SMTP Deliverability Verification dispatch.',
+    type: 'general',
+    status: result.success ? 'sent' : 'failed',
+    error: result.error || '',
+    sentBy: req.user._id,
+    sentByName: req.user.name,
+  }).catch((err) => console.error('Failed to log test email:', err.message));
+
   if (!result.success) {
-    res.status(500);
+    res.status(502);
     throw new Error(result.error || 'SMTP delivery failed. Check credentials in .env.');
   }
 
   res.json({
     success: true,
-    message: `Test email successfully dispatched to ${recipientEmail} via one.com!`,
+    message: `Test email successfully dispatched to ${cleanRecipient} via one.com! Please check your Inbox and Spam/Junk folder.`,
+    messageId: result.messageId,
   });
 });
 

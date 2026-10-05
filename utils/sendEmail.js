@@ -1,18 +1,16 @@
 const nodemailer = require('nodemailer');
 
-let transporter;
-
-// Lazily create the transporter so missing env vars don't crash the app at boot.
-const getTransporter = () => {
-  if (transporter) return transporter;
-
+// Creates a transporter instance configured for IPv4 and explicit timeouts.
+// Explicit IPv4 (family: 4) is critical on Windows/ISP environments to avoid
+// IPv6 connection hangs (which cause 2-minute "Connection timeout" errors).
+const createTransporter = () => {
   const port = Number(process.env.EMAIL_PORT) || 465;
   const isSecure =
     process.env.EMAIL_SECURE !== undefined
       ? process.env.EMAIL_SECURE === 'true'
       : port === 465;
 
-  transporter = nodemailer.createTransport({
+  return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'send.one.com',
     port,
     secure: isSecure,
@@ -20,9 +18,11 @@ const getTransporter = () => {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    family: 4,
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
   });
-
-  return transporter;
 };
 
 // Wraps email body in a clean, professional, responsive HTML layout with anti-spam footer
@@ -91,8 +91,9 @@ const sendEmail = async ({ to, subject, html, text }) => {
       ?.trim() ||
     '';
 
+  const transporter = createTransporter();
   try {
-    const info = await getTransporter().sendMail({
+    const info = await transporter.sendMail({
       from: process.env.EMAIL_FROM || process.env.EMAIL_USER,
       to,
       replyTo: process.env.EMAIL_USER,
@@ -107,8 +108,11 @@ const sendEmail = async ({ to, subject, html, text }) => {
     return { success: true, messageId: info.messageId };
   } catch (error) {
     console.error('Nodemailer send error:', error);
-    transporter = null;
     return { success: false, error: error.message };
+  } finally {
+    try {
+      transporter.close();
+    } catch (_) {}
   }
 };
 

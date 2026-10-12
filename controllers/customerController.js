@@ -5,6 +5,7 @@ const Lead = require('../models/Lead');
 const FollowUp = require('../models/FollowUp');
 const CallHistory = require('../models/CallHistory');
 const { escapeRegex } = require('../utils/regexHelper');
+const { sendNewCustomerLeadEmails } = require('../services/followUpEmailService');
 
 // Strict Data Isolation:
 // - Callers can ONLY see contacts assigned to their account. Callers cannot see other callers' contacts.
@@ -57,12 +58,22 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const customer = await Customer.create(payload);
 
-  await Lead.create({
+  const lead = await Lead.create({
     customerId: customer._id,
     customerName: customer.name,
     status: 'new',
     telecallerId: customer.telecallerId || null,
     history: [{ status: 'new', date: new Date(), remark: 'Lead created', updatedBy: req.user._id }],
+  });
+
+  // Automatically dispatch notification emails to both Customer and Lead Owner
+  sendNewCustomerLeadEmails({
+    customer,
+    lead,
+    remark: payload.remarks || payload.remark || 'New customer registered and added to lead pipeline',
+    updatedByUser: req.user,
+  }).catch((err) => {
+    console.error('[createCustomer] Error dispatching new customer lead emails:', err.message);
   });
 
   res.status(201).json({ success: true, customer });

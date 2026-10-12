@@ -3,7 +3,7 @@ const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const { escapeRegex } = require('../utils/regexHelper');
-const { sendFollowUpStatusChangeEmails } = require('../services/followUpEmailService');
+const { sendFollowUpStatusChangeEmails, sendNewCustomerLeadEmails } = require('../services/followUpEmailService');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -11,16 +11,10 @@ const getTelecallerCustomerIds = async (user) => {
   }).distinct('_id');
 };
 
-// @desc    Assign customer to lead pipeline (ADMIN ONLY)
+// @desc    Assign customer to lead pipeline
 // @route   POST /api/leads
-// @access  Private/Admin
+// @access  Private
 const createLead = asyncHandler(async (req, res) => {
-  // STRICT RULE: Only administrators can assign customers to leads
-  if (req.user.role !== 'admin') {
-    res.status(403);
-    throw new Error('Only administrators can assign a customer to a lead');
-  }
-
   const { customerId, telecallerId, status = 'new', remark } = req.body;
 
   if (!customerId) {
@@ -34,18 +28,25 @@ const createLead = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
+  let assignedTelecallerId;
+  if (req.user.role === 'telecaller') {
+    assignedTelecallerId = req.user._id;
+  } else {
+    assignedTelecallerId = telecallerId || customer.telecallerId || null;
+  }
+
   // Check if lead already exists for this customer
   let existingLead = await Lead.findOne({ customerId });
   if (existingLead) {
     // If already exists, update status and assigned telecaller instead of duplicating
     existingLead.status = status;
-    if (telecallerId !== undefined) {
-      existingLead.telecallerId = telecallerId || null;
+    if (assignedTelecallerId !== undefined) {
+      existingLead.telecallerId = assignedTelecallerId || null;
     }
     existingLead.history.push({
       status,
       date: new Date(),
-      remark: remark || 'Lead reassigned/updated by Admin',
+      remark: remark || `Lead updated/assigned by ${req.user.name || 'User'}`,
       updatedBy: req.user._id,
     });
     await existingLead.save();
@@ -53,18 +54,16 @@ const createLead = asyncHandler(async (req, res) => {
     const populatedLead = await Lead.findById(existingLead._id)
       .populate('customerId', 'name mobile alternateNumber email company city status leadSource');
 
-    // Send email to both customer and telecaller on follow-up update
-    sendFollowUpStatusChangeEmails({
+    // Send email to both customer and lead owner
+    sendNewCustomerLeadEmails({
+      customer,
       lead: populatedLead,
-      newStatus: status,
-      remark: remark || 'Lead reassigned/updated by Admin',
+      remark: remark || `Lead updated/assigned by ${req.user.name || 'User'}`,
       updatedByUser: req.user,
     }).catch((err) => console.error('[createLead/existing] Email error:', err.message));
 
     return res.status(200).json({ success: true, lead: populatedLead, message: 'Existing lead updated' });
   }
-
-  const assignedTelecallerId = telecallerId || customer.telecallerId || null;
 
   const lead = await Lead.create({
     customerId,
@@ -75,7 +74,7 @@ const createLead = asyncHandler(async (req, res) => {
       {
         status,
         date: new Date(),
-        remark: remark || 'Customer assigned to lead pipeline by Admin',
+        remark: remark || `Customer assigned to lead pipeline by ${req.user.name || 'User'}`,
         updatedBy: req.user._id,
       },
     ],
@@ -87,14 +86,17 @@ const createLead = asyncHandler(async (req, res) => {
   // If customer didn't have telecaller assigned, update customer record too
   if (assignedTelecallerId && !customer.telecallerId) {
     customer.telecallerId = assignedTelecallerId;
+    if (req.user.role === 'telecaller') {
+      customer.assignedTelecaller = req.user.name;
+    }
     await customer.save().catch(() => {});
   }
 
   // Send automated email notification to both customer and lead/telecaller
-  sendFollowUpStatusChangeEmails({
+  sendNewCustomerLeadEmails({
+    customer,
     lead: populatedLead,
-    newStatus: status,
-    remark: remark || 'Customer assigned to lead pipeline by Admin',
+    remark: remark || `Customer assigned to lead pipeline by ${req.user.name || 'User'}`,
     updatedByUser: req.user,
   }).catch((err) => console.error('[createLead] Email dispatch error:', err.message));
 

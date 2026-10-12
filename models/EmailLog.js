@@ -7,7 +7,7 @@ const emailLogSchema = new mongoose.Schema(
     email: { type: String, required: true },
     subject: { type: String, required: true },
     body: { type: String, default: '' },
-    type: { type: String, enum: ['welcome', 'follow-up', 'offer', 'custom', 'reminder', 'general', 'meeting-reminder', 'meeting-confirmation'], default: 'follow-up' },
+    type: { type: String, enum: ['welcome', 'follow-up', 'offer', 'custom', 'reminder', 'general', 'meeting-reminder', 'meeting-confirmation', 'lead', 'lead-assignment'], default: 'follow-up' },
     status: { type: String, enum: ['sent', 'delivered', 'read', 'failed'], default: 'sent' },
     error: { type: String, default: '' },
     sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

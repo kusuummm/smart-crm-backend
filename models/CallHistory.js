@@ -11,6 +11,25 @@ const callHistorySchema = new mongoose.Schema(
     remarks: { type: String, default: '' },
     calledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     calledByName: { type: String, default: '' },
+    recordingUrl: { type: String, default: '' },
+    recordingDuration: { type: String, default: '' },
+    recordingSize: { type: String, default: '' },
+    waveform: [{ type: Number }],
+    transcript: [
+      {
+        speaker: { type: String },
+        role: { type: String, enum: ['agent', 'customer'], default: 'agent' },
+        time: { type: String },
+        text: { type: String },
+      },
+    ],
+    aiSummary: {
+      sentiment: { type: String, default: 'Neutral' },
+      score: { type: Number, default: 85 },
+      summary: { type: String, default: '' },
+      keyPoints: [{ type: String }],
+      followUps: [{ type: String }],
+    },
   },
   { timestamps: true }
 );

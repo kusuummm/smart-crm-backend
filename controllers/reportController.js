@@ -28,13 +28,18 @@ const respondWithReport = async (res, { filename, sheetName, columns, rows, form
 
 // @desc    Daily follow-up report for a given date (defaults to today)
 // @route   GET /api/reports/daily-followups?date=YYYY-MM-DD&format=json|excel|csv
-// @access  Private
+// @access  Private (Telecaller only - strictly isolated)
 const dailyFollowUpReport = asyncHandler(async (req, res) => {
+  if (req.user.role === 'admin') {
+    res.status(403);
+    throw new Error('Access denied: Administrators cannot access telecaller activity reports');
+  }
+
   const date = req.query.date || new Date().toISOString().split('T')[0];
   const format = req.query.format || 'json';
 
-  const filter = { date };
-  if (req.user.role === 'telecaller') filter.createdBy = req.user._id;
+  // Strict isolation: callers can ONLY access their own follow-up reports
+  const filter = { date, createdBy: req.user._id };
 
   const followUps = await FollowUp.find(filter).sort({ time: 1 });
 
@@ -61,8 +66,13 @@ const dailyFollowUpReport = asyncHandler(async (req, res) => {
 
 // @desc    Monthly report - follow-up and call activity summary for a given month
 // @route   GET /api/reports/monthly?year=2026&month=7&format=json|excel|csv
-// @access  Private
+// @access  Private (Telecaller only - strictly isolated)
 const monthlyReport = asyncHandler(async (req, res) => {
+  if (req.user.role === 'admin') {
+    res.status(403);
+    throw new Error('Access denied: Administrators cannot access telecaller activity reports');
+  }
+
   const now = new Date();
   const year = parseInt(req.query.year, 10) || now.getFullYear();
   const month = parseInt(req.query.month, 10) || now.getMonth() + 1; // 1-12
@@ -70,8 +80,8 @@ const monthlyReport = asyncHandler(async (req, res) => {
 
   const prefix = `${year}-${String(month).padStart(2, '0')}`; // 'YYYY-MM'
 
-  const filter = { date: new RegExp(`^${prefix}`) };
-  if (req.user.role === 'telecaller') filter.createdBy = req.user._id;
+  // Strict isolation: callers can ONLY access their own monthly reports
+  const filter = { date: new RegExp(`^${prefix}`), createdBy: req.user._id };
 
   const followUps = await FollowUp.find(filter).sort({ date: 1 });
 
@@ -108,11 +118,16 @@ const monthlyReport = asyncHandler(async (req, res) => {
 
 // @desc    Lead conversion report - breakdown of leads by status, with conversion rate
 // @route   GET /api/reports/lead-conversion?format=json|excel|csv
-// @access  Private
+// @access  Private (Telecaller only - strictly isolated)
 const leadConversionReport = asyncHandler(async (req, res) => {
+  if (req.user.role === 'admin') {
+    res.status(403);
+    throw new Error('Access denied: Administrators cannot access telecaller conversion reports');
+  }
+
   const format = req.query.format || 'json';
-  const filter = {};
-  if (req.user.role === 'telecaller') filter.telecallerId = req.user._id;
+  // Strict isolation: telecaller can only access their own leads
+  const filter = { telecallerId: req.user._id };
 
   const leads = await Lead.find(filter);
 
@@ -191,4 +206,108 @@ const telecallerPerformanceReport = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { dailyFollowUpReport, monthlyReport, leadConversionReport, telecallerPerformanceReport };
+// @desc    Get detailed performance report & graph data for a specific telecaller
+// @route   GET /api/reports/telecaller/:id/graph
+// @access  Private/Admin
+const getTelecallerReportGraph = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const tc = await User.findById(id);
+  if (!tc) {
+    res.status(404);
+    throw new Error('Telecaller not found');
+  }
+
+  const [customerCount, leads, followUps, calls] = await Promise.all([
+    Customer.countDocuments({ $or: [{ telecallerId: tc._id }, { assignedTelecaller: tc.name }] }),
+    Lead.find({ telecallerId: tc._id }),
+    FollowUp.find({ createdBy: tc._id }),
+    CallHistory.find({ calledBy: tc._id }),
+  ]);
+
+  const totalLeads = leads.length;
+  const convertedLeads = leads.filter((l) => l.status === 'converted').length;
+  const inProgressLeads = leads.filter((l) => l.status === 'in_progress' || l.status === 'contacted').length;
+  const newLeads = leads.filter((l) => l.status === 'new').length;
+
+  const totalCalls = calls.length;
+  const connectedCalls = calls.filter((c) => c.status === 'connected').length;
+  const missedCalls = calls.filter((c) => c.status === 'missed').length;
+  const busyCalls = calls.filter((c) => c.status === 'busy').length;
+
+  const totalFollowUps = followUps.length;
+  const completedFollowUps = followUps.filter((f) => f.status === 'completed').length;
+  const pendingFollowUps = followUps.filter((f) => f.status === 'pending').length;
+
+  // Generate last 7 days daily activity
+  const daysOfWeek = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dailyActivity = [];
+  const now = new Date();
+
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const dateStr = d.toISOString().split('T')[0];
+    const dayLabel = daysOfWeek[d.getDay()];
+
+    const dayCalls = calls.filter((c) => c.date === dateStr).length;
+    const dayFollowUps = followUps.filter((f) => f.date === dateStr).length;
+    const dayLeads = leads.filter(
+      (l) => l.createdAt && new Date(l.createdAt).toISOString().split('T')[0] === dateStr
+    ).length;
+
+    dailyActivity.push({
+      date: dateStr,
+      day: dayLabel,
+      calls: dayCalls,
+      followUps: dayFollowUps,
+      leads: dayLeads,
+    });
+  }
+
+  // Pipeline stage breakdown
+  const stageBreakdown = [
+    { name: 'New Leads', value: newLeads, color: '#3B82F6' },
+    { name: 'In Progress', value: inProgressLeads, color: '#F59E0B' },
+    { name: 'Converted', value: convertedLeads, color: '#10B981' },
+    { name: 'Other', value: Math.max(0, totalLeads - newLeads - inProgressLeads - convertedLeads), color: '#8B5CF6' },
+  ];
+
+  res.json({
+    success: true,
+    telecaller: {
+      _id: tc._id,
+      name: tc.name,
+      email: tc.email,
+      phone: tc.phone || '',
+      role: tc.role || 'telecaller',
+      status: tc.status,
+      isApproved: tc.isApproved,
+      isOnline: tc.isOnline,
+      createdAt: tc.createdAt,
+      lastActive: tc.lastActive,
+    },
+    metrics: {
+      customersHandled: customerCount,
+      totalLeads,
+      convertedLeads,
+      conversionRate: totalLeads > 0 ? ((convertedLeads / totalLeads) * 100).toFixed(1) : '0',
+      totalCalls,
+      connectedCalls,
+      connectRate: totalCalls > 0 ? ((connectedCalls / totalCalls) * 100).toFixed(1) : '0',
+      totalFollowUps,
+      completedFollowUps,
+      pendingFollowUps,
+      followUpRate: totalFollowUps > 0 ? ((completedFollowUps / totalFollowUps) * 100).toFixed(1) : '0',
+    },
+    dailyActivity,
+    stageBreakdown,
+  });
+});
+
+module.exports = {
+  dailyFollowUpReport,
+  monthlyReport,
+  leadConversionReport,
+  telecallerPerformanceReport,
+  getTelecallerReportGraph,
+};

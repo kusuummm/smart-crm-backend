@@ -49,41 +49,16 @@ const getLeads = asyncHandler(async (req, res) => {
   const conditions = [];
 
   if (req.user.role === 'telecaller') {
-    const customerIds = await getTelecallerCustomerIds(req.user);
+    // Caller strictly gets only their own leads
+    conditions.push({ telecallerId: req.user._id });
+  } else {
+    // Admin CANNOT access caller leads! Admin only sees unassigned leads
     conditions.push({
       $or: [
-        { telecallerId: req.user._id },
-        { customerId: { $in: customerIds } },
+        { telecallerId: null },
+        { telecallerId: { $exists: false } },
       ],
     });
-  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
-    if (req.query.telecallerId === 'unassigned') {
-      const unassignedCustIds = await Customer.find({
-        $or: [
-          { telecallerId: null, assignedTelecaller: null },
-          { telecallerId: { $exists: false }, assignedTelecaller: { $exists: false } },
-          { assignedTelecaller: '' },
-          { assignedTelecaller: 'Unassigned' },
-        ],
-      }).distinct('_id');
-      conditions.push({
-        $or: [
-          { telecallerId: null },
-          { telecallerId: { $exists: false } },
-          { customerId: { $in: unassignedCustIds } },
-        ],
-      });
-    } else {
-      const customerIds = await Customer.find({
-        $or: [{ telecallerId: req.query.telecallerId }],
-      }).distinct('_id');
-      conditions.push({
-        $or: [
-          { telecallerId: req.query.telecallerId },
-          { customerId: { $in: customerIds } },
-        ],
-      });
-    }
   }
 
   if (status) conditions.push({ status });

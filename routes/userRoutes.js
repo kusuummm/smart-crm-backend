@@ -11,9 +11,16 @@ const {
   reassignWorkload,
   getSystemOverview,
   getAuditLogs,
+  approveUser,
+  rejectUser,
+  heartbeat,
 } = require('../controllers/userController');
 const { protect, authorize } = require('../middleware/auth');
 
+// Telecallers and Admins can both ping heartbeat to stay online
+router.post('/heartbeat', protect, heartbeat);
+
+// All management routes require admin privileges
 router.use(protect, authorize('admin'));
 
 // Specific named routes must come before parameterized /:id routes
@@ -22,6 +29,8 @@ router.get('/system-overview', getSystemOverview);
 router.get('/audit-logs', getAuditLogs);
 
 router.route('/').post(createUser).get(getUsers);
+router.put('/:id/approve', approveUser);
+router.put('/:id/reject', rejectUser);
 router.route('/:id').get(getUserById).put(updateUser).delete(deleteUser);
 router.put('/:id/reset-password', resetPassword);
 router.put('/:id/status', toggleUserStatus);

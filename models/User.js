@@ -5,11 +5,19 @@ const userSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: true, minlength: 4, select: false },
-    role: { type: String, enum: ['admin', 'telecaller', 'user'], default: 'user' },
+    password: { type: String, required: true, select: false },
+    role: {
+      type: String,
+      enum: ['admin', 'telecaller', 'user', 'owner', 'manager', 'member', 'ai_agent', 'Admin', 'Telecaller', 'User', 'Owner', 'Manager', 'Member', 'AI Agent'],
+      default: 'telecaller',
+    },
     avatar: { type: String, default: '' }, // initials, e.g. "JS"
-    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
+    status: { type: String, enum: ['active', 'inactive', 'pending', 'rejected'], default: 'pending' },
+    isApproved: { type: Boolean, default: false },
     phone: { type: String, default: '' },
+    balance: { type: String, default: '₹0.0' },
+    isOnline: { type: Boolean, default: false },
+    lastActive: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );

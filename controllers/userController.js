@@ -27,30 +27,64 @@ const createUser = asyncHandler(async (req, res) => {
     throw new Error('A user with this email already exists');
   }
 
+  const isCaller = role !== 'admin';
   const user = await User.create({
     name,
     email: email.toLowerCase(),
     password,
-    role: role === 'admin' ? 'admin' : 'telecaller',
-    phone,
+    role: isCaller ? 'telecaller' : 'admin',
+    phone: phone || '',
+    status: isCaller ? 'pending' : 'active',
+    isApproved: isCaller ? false : true,
   });
 
-  res.status(201).json({ success: true, user });
+  res.status(201).json({
+    success: true,
+    user,
+    message: isCaller
+      ? 'Telecaller account created successfully! It is pending admin approval before the caller can log in.'
+      : 'Admin account created successfully!',
+  });
 });
 
-// @desc    Get all users (optionally filter by role), enriched with workload counts
+// @desc    Get all users (optionally filter by role/status), enriched with workload counts
 // @route   GET /api/users?role=telecaller
 // @access  Private/Admin
 const getUsers = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.role) filter.role = req.query.role;
+  if (req.query.status) filter.status = req.query.status;
+  if (req.query.pending === 'true') {
+    filter.$or = [{ status: 'pending' }, { isApproved: false }];
+  }
 
   const users = await User.find(filter).sort({ createdAt: -1 });
 
-  // Enrich each user with assigned customer and lead counts
+  // Look up recent active sessions within the last 3 minutes
+  const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
+  const activeSessions = await Session.find({
+    lastSeenAt: { $gte: threeMinutesAgo },
+  }).select('user lastSeenAt');
+
+  const activeSessionMap = new Map();
+  activeSessions.forEach((s) => {
+    activeSessionMap.set(String(s.user), s.lastSeenAt);
+  });
+
+  // Enrich each user with assigned customer and lead counts and real-time online status
   const enrichedUsers = await Promise.all(
     users.map(async (u) => {
       const uObj = u.toObject();
+      const lastSessionSeen = activeSessionMap.get(String(u._id));
+      const hasRecentActivity = u.lastActive && (Date.now() - new Date(u.lastActive).getTime()) < 3 * 60 * 1000;
+      
+      // User is online if active account with active session or recent heartbeat
+      const isOnline = Boolean(
+        u.status === 'active' && (lastSessionSeen || (u.isOnline && hasRecentActivity))
+      );
+      uObj.isOnline = isOnline;
+      uObj.lastActive = lastSessionSeen || u.lastActive || u.updatedAt || u.createdAt;
+
       if (u.role !== 'admin') {
         const [customerCount, leadCount] = await Promise.all([
           Customer.countDocuments({
@@ -68,7 +102,16 @@ const getUsers = asyncHandler(async (req, res) => {
     })
   );
 
-  res.json({ success: true, count: enrichedUsers.length, users: enrichedUsers });
+  const pendingCount = await User.countDocuments({
+    $or: [{ status: 'pending' }, { isApproved: false }],
+  });
+
+  res.json({
+    success: true,
+    count: enrichedUsers.length,
+    pendingCount,
+    users: enrichedUsers,
+  });
 });
 
 // @desc    Get single user
@@ -318,32 +361,70 @@ const getSystemOverview = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Get system-wide audit activity logs for Admin
+// @desc    Approve a pending telecaller registration
+// @route   PUT /api/users/:id/approve
+// @access  Private/Admin
+const approveUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  user.status = 'active';
+  user.isApproved = true;
+  await user.save();
+
+  res.json({
+    success: true,
+    message: `${user.name} has been approved successfully. They can now access the system.`,
+    user,
+  });
+});
+
+// @desc    Reject a pending telecaller registration
+// @route   PUT /api/users/:id/reject
+// @access  Private/Admin
+const rejectUser = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.params.id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  user.status = 'rejected';
+  user.isApproved = false;
+  await user.save();
+
+  // Invalidate any active session
+  await Session.deleteMany({ user: user._id });
+
+  res.json({
+    success: true,
+    message: `${user.name}'s registration has been rejected.`,
+    user,
+  });
+});
+
+// @desc    Get system-wide audit activity logs for Admin (strictly administrative, callers isolated)
 // @route   GET /api/users/audit-logs
 // @access  Private/Admin
 const getAuditLogs = asyncHandler(async (req, res) => {
   const { limit = 30 } = req.query;
   const limitNum = Math.min(parseInt(limit, 10) || 30, 100);
 
-  const [calls, waLogs, emailLogs] = await Promise.all([
-    CallHistory.find().sort({ createdAt: -1 }).limit(limitNum),
-    WhatsAppLog.find().sort({ createdAt: -1 }).limit(limitNum),
-    EmailLog.find().sort({ createdAt: -1 }).limit(limitNum),
+  // Admin cannot access callers' call recordings or caller contacts
+  // Only administrative activity logs are returned
+  const [waLogs, emailLogs] = await Promise.all([
+    WhatsAppLog.find({ sentBy: req.user._id }).sort({ createdAt: -1 }).limit(limitNum),
+    EmailLog.find({ sentBy: req.user._id }).sort({ createdAt: -1 }).limit(limitNum),
   ]);
 
   const activities = [
-    ...calls.map((c) => ({
-      id: c._id,
-      type: 'call',
-      actor: c.telecallerName || 'Agent',
-      customer: c.customerName,
-      details: `${c.duration} call (${c.status}) - ${c.remarks || 'No remarks'}`,
-      time: c.createdAt || c.date,
-    })),
     ...waLogs.map((w) => ({
       id: w._id,
       type: 'whatsapp',
-      actor: w.sentBy || 'Agent',
+      actor: w.sentByName || 'Admin',
       customer: w.customerName,
       details: `WhatsApp message: "${w.message?.slice(0, 60)}..." (${w.status})`,
       time: w.createdAt || w.date,
@@ -351,7 +432,7 @@ const getAuditLogs = asyncHandler(async (req, res) => {
     ...emailLogs.map((e) => ({
       id: e._id,
       type: 'email',
-      actor: e.sentBy || 'Agent',
+      actor: e.sentByName || 'Admin',
       customer: e.customerName,
       details: `Email: "${e.subject}" (${e.status})`,
       time: e.createdAt || e.date,
@@ -361,6 +442,22 @@ const getAuditLogs = asyncHandler(async (req, res) => {
     .slice(0, limitNum);
 
   res.json({ success: true, count: activities.length, activities });
+});
+
+// @desc    Heartbeat to keep caller online status alive
+// @route   POST /api/users/heartbeat
+// @access  Private
+const heartbeat = asyncHandler(async (req, res) => {
+  if (req.user) {
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { isOnline: true, lastActive: new Date() } }
+    );
+  }
+  if (req.sessionId) {
+    await Session.updateOne({ tokenId: req.sessionId }, { $set: { lastSeenAt: new Date() } });
+  }
+  res.json({ success: true, isOnline: true, lastActive: new Date() });
 });
 
 module.exports = {
@@ -374,5 +471,8 @@ module.exports = {
   reassignWorkload,
   getSystemOverview,
   getAuditLogs,
+  approveUser,
+  rejectUser,
+  heartbeat,
 };
 

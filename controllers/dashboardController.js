@@ -12,52 +12,34 @@ const User = require('../models/User');
 // @access  Private
 const getStats = asyncHandler(async (req, res) => {
   const isTelecaller = req.user.role === 'telecaller';
-  const telecallerId = isTelecaller ? req.user._id : req.query.telecallerId;
   let customerFilter = {};
   let leadFilter = {};
   let followUpFilter = {};
   let logFilter = {};
 
-  if (telecallerId && telecallerId !== 'all') {
-    if (telecallerId === 'unassigned') {
-      customerFilter = {
-        $or: [
-          { telecallerId: null, assignedTelecaller: null },
-          { telecallerId: { $exists: false }, assignedTelecaller: { $exists: false } },
-          { assignedTelecaller: '' },
-          { assignedTelecaller: 'Unassigned' },
-        ],
-      };
-      const unassignedCustIds = await Customer.find(customerFilter).distinct('_id');
-      leadFilter = {
-        $or: [
-          { telecallerId: null },
-          { telecallerId: { $exists: false } },
-          { customerId: { $in: unassignedCustIds } },
-        ],
-      };
-      followUpFilter = { customerId: { $in: unassignedCustIds } };
-      logFilter = { customerId: { $in: unassignedCustIds } };
-    } else {
-      const targetUser = await User.findById(telecallerId);
-      const orConditions = [{ telecallerId }];
-      if (targetUser && targetUser.name) {
-        orConditions.push({ assignedTelecaller: targetUser.name });
-      }
-
-      const customerIds = await Customer.find({ $or: orConditions }).distinct('_id');
-
-      customerFilter = { $or: orConditions };
-      leadFilter = {
-        $or: [{ telecallerId }, { customerId: { $in: customerIds } }],
-      };
-      followUpFilter = {
-        $or: [{ createdBy: telecallerId }, { customerId: { $in: customerIds } }],
-      };
-      logFilter = {
-        $or: [{ sentBy: telecallerId }, { customerId: { $in: customerIds } }],
-      };
-    }
+  if (isTelecaller) {
+    customerFilter = {
+      $or: [{ telecallerId: req.user._id }, { assignedTelecaller: req.user.name }],
+    };
+    leadFilter = { telecallerId: req.user._id };
+    followUpFilter = { createdBy: req.user._id };
+    logFilter = { sentBy: req.user._id };
+  } else {
+    // Admin CANNOT access contacts assigned to callers! Admin only sees unassigned items
+    customerFilter = {
+      $or: [
+        { telecallerId: null },
+        { telecallerId: { $exists: false } },
+        { assignedTelecaller: 'Unassigned' },
+        { assignedTelecaller: '' },
+        { assignedTelecaller: null },
+      ],
+    };
+    leadFilter = {
+      $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
+    };
+    followUpFilter = { createdBy: req.user._id };
+    logFilter = { sentBy: req.user._id };
   }
 
   const today = new Date().toISOString().split('T')[0];
@@ -72,6 +54,7 @@ const getStats = asyncHandler(async (req, res) => {
     emailCount,
     unassignedCustomers,
     unassignedLeads,
+    pendingApprovals,
   ] = await Promise.all([
     Customer.countDocuments(customerFilter),
     Lead.countDocuments(leadFilter),
@@ -91,6 +74,9 @@ const getStats = asyncHandler(async (req, res) => {
     Lead.countDocuments({
       $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
     }),
+    User.countDocuments({
+      $or: [{ status: 'pending' }, { isApproved: false }],
+    }),
   ]);
 
   res.json({
@@ -103,6 +89,7 @@ const getStats = asyncHandler(async (req, res) => {
       completedFollowUps,
       totalWhatsAppSent: whatsappCount,
       totalEmailsSent: emailCount,
+      pendingApprovals,
     },
     unassignedCount: {
       customers: unassignedCustomers,

@@ -10,6 +10,7 @@ const {
   logout,
   registerSendOtp,
   registerVerifyOtp,
+  register,
   forgotPasswordSendOtp,
   forgotPasswordVerifyReset,
   changePasswordSendOtp,
@@ -19,6 +20,7 @@ const { protect } = require('../middleware/auth');
 
 // Public Authentication
 router.post('/login', login);
+router.post('/register', register);
 router.post('/register/send-otp', registerSendOtp);
 router.post('/register/verify-otp', registerVerifyOtp);
 router.post('/forgot-password/send-otp', forgotPasswordSendOtp);

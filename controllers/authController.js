@@ -24,9 +24,19 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Invalid credentials');
   }
 
+  if (user.status === 'pending' || user.isApproved === false) {
+    res.status(403);
+    throw new Error('Your account is pending administrator approval. Please wait until an admin approves your account.');
+  }
+
+  if (user.status === 'rejected') {
+    res.status(403);
+    throw new Error('Your account registration was rejected by the administrator.');
+  }
+
   if (user.status !== 'active') {
     res.status(403);
-    throw new Error('Invalid credentials or inactive account');
+    throw new Error('Your account is inactive. Please contact the administrator.');
   }
 
   const { token, sid } = generateToken(user._id, user.role);
@@ -40,6 +50,11 @@ const login = asyncHandler(async (req, res) => {
     ip: req.ip,
   });
 
+  // Update user online status
+  user.isOnline = true;
+  user.lastActive = new Date();
+  await user.save();
+
   res.json({
     success: true,
     token,
@@ -50,6 +65,8 @@ const login = asyncHandler(async (req, res) => {
       role: user.role,
       avatar: user.avatar,
       status: user.status,
+      phone: user.phone || '',
+      balance: user.balance || '₹0.0',
     },
   });
 });
@@ -91,6 +108,7 @@ const updateMe = asyncHandler(async (req, res) => {
       avatar: user.avatar,
       status: user.status,
       phone: user.phone,
+      balance: user.balance || '₹0.0',
     },
   });
 });
@@ -167,6 +185,9 @@ const changePassword = asyncHandler(async (req, res) => {
 const logout = asyncHandler(async (req, res) => {
   if (req.sessionId) {
     await Session.deleteOne({ tokenId: req.sessionId });
+  }
+  if (req.user) {
+    await User.updateOne({ _id: req.user._id }, { $set: { isOnline: false, lastActive: new Date() } });
   }
   res.json({ success: true, message: 'Logged out successfully' });
 });
@@ -274,24 +295,16 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
     password: otpDoc.metadata.password,
     phone: otpDoc.metadata.phone || '',
     role: otpDoc.metadata.role || 'telecaller',
-    status: 'active',
+    status: 'pending',
+    isApproved: false,
   });
 
   await Otp.deleteOne({ _id: otpDoc._id });
 
-  const { token, sid } = generateToken(user._id, user.role);
-
-  await Session.create({
-    user: user._id,
-    tokenId: sid,
-    userAgent: req.headers['user-agent'] || '',
-    ip: req.ip,
-  });
-
   res.status(201).json({
     success: true,
-    message: 'Account registered and verified successfully!',
-    token,
+    pendingApproval: true,
+    message: 'Registration verified successfully! Your account is pending administrator approval before you can access the system.',
     user: {
       id: user._id,
       name: user.name,
@@ -299,6 +312,60 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
       role: user.role,
       avatar: user.avatar,
       status: user.status,
+      isApproved: user.isApproved,
+      phone: user.phone,
+    },
+  });
+});
+
+// @desc    Direct registration for callers (creates pending account awaiting admin approval)
+// @route   POST /api/auth/register
+// @access  Public
+const register = asyncHandler(async (req, res) => {
+  const { name, email, password, phone } = req.body;
+
+  if (!name || !name.trim()) {
+    res.status(400);
+    throw new Error('Full Name is required');
+  }
+  if (!email || !email.trim() || !email.includes('@')) {
+    res.status(400);
+    throw new Error('A valid email address is required');
+  }
+  if (!password || password.length < 4) {
+    res.status(400);
+    throw new Error('Password must be at least 4 characters');
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const existingUser = await User.findOne({ email: normalizedEmail });
+  if (existingUser) {
+    res.status(400);
+    throw new Error('An account with this email address already exists. Please sign in.');
+  }
+
+  const user = await User.create({
+    name: name.trim(),
+    email: normalizedEmail,
+    password,
+    phone: phone ? phone.trim() : '',
+    role: 'telecaller',
+    status: 'pending',
+    isApproved: false,
+  });
+
+  res.status(201).json({
+    success: true,
+    pendingApproval: true,
+    message: 'Registration submitted successfully! Your account is pending administrator approval before you can access the system.',
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      status: user.status,
+      isApproved: user.isApproved,
       phone: user.phone,
     },
   });
@@ -389,6 +456,21 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
   if (!user) {
     res.status(404);
     throw new Error('User not found');
+  }
+
+  if (user.status === 'pending' || user.isApproved === false) {
+    res.status(403);
+    throw new Error('Your account is pending administrator approval. Please wait until an admin approves your account.');
+  }
+
+  if (user.status === 'rejected') {
+    res.status(403);
+    throw new Error('Your account registration was rejected by the administrator.');
+  }
+
+  if (user.status !== 'active') {
+    res.status(403);
+    throw new Error('Your account is inactive. Please contact the administrator.');
   }
 
   user.password = newPassword;
@@ -512,6 +594,7 @@ module.exports = {
   logout,
   registerSendOtp,
   registerVerifyOtp,
+  register,
   forgotPasswordSendOtp,
   forgotPasswordVerifyReset,
   changePasswordSendOtp,

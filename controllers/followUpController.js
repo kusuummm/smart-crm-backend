@@ -67,38 +67,8 @@ const getFollowUps = asyncHandler(async (req, res) => {
   const { status, date, page = 1, limit = 10, telecallerId } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    conditions.push({
-      $or: [
-        { createdBy: req.user._id },
-        { customerId: { $in: customerIds } },
-      ],
-    });
-  } else if (telecallerId && telecallerId !== 'all') {
-    if (telecallerId === 'unassigned') {
-      const unassignedCustIds = await Customer.find({
-        $or: [
-          { telecallerId: null, assignedTelecaller: null },
-          { telecallerId: { $exists: false }, assignedTelecaller: { $exists: false } },
-          { assignedTelecaller: '' },
-          { assignedTelecaller: 'Unassigned' },
-        ],
-      }).distinct('_id');
-      conditions.push({ customerId: { $in: unassignedCustIds } });
-    } else {
-      const targetUser = await User.findById(telecallerId);
-      const orConditions = [{ telecallerId }];
-      if (targetUser?.name) orConditions.push({ assignedTelecaller: targetUser.name });
-      const customerIds = await Customer.find({ $or: orConditions }).distinct('_id');
-      conditions.push({
-        $or: [
-          { createdBy: telecallerId },
-          { customerId: { $in: customerIds } },
-        ],
-      });
-    }
-  }
+  // Strict isolation: users only see their own scheduled follow-ups
+  conditions.push({ createdBy: req.user._id });
 
   if (status) conditions.push({ status });
   if (date) conditions.push({ date });

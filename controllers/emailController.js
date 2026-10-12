@@ -94,15 +94,8 @@ const getEmailLogs = asyncHandler(async (req, res) => {
   const { type, status, customerId, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    conditions.push({
-      $or: [
-        { sentBy: req.user._id },
-        { customerId: { $in: customerIds } },
-      ],
-    });
-  }
+  // Strict isolation: users only see emails they sent
+  conditions.push({ sentBy: req.user._id });
 
   if (type) conditions.push({ type });
   if (status) conditions.push({ status });

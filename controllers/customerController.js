@@ -6,12 +6,23 @@ const FollowUp = require('../models/FollowUp');
 const CallHistory = require('../models/CallHistory');
 const { escapeRegex } = require('../utils/regexHelper');
 
-// Standard users only see customers assigned to them; admins see everything.
+// Strict Data Isolation:
+// - Callers can ONLY see contacts assigned to their account. Callers cannot see other callers' contacts.
+// - Admin CANNOT access contacts assigned to callers! Admin can only see unassigned contacts for distribution.
 const scopeToRole = (req, filter = {}) => {
   if (req.user.role !== 'admin') {
     filter.$or = [
       { telecallerId: req.user._id },
       { assignedTelecaller: req.user.name },
+    ];
+  } else {
+    // Admin cannot access contacts assigned to callers
+    filter.$or = [
+      { telecallerId: null },
+      { telecallerId: { $exists: false } },
+      { assignedTelecaller: 'Unassigned' },
+      { assignedTelecaller: '' },
+      { assignedTelecaller: null },
     ];
   }
   return filter;
@@ -66,9 +77,6 @@ const getCustomers = asyncHandler(async (req, res) => {
     city,
     source,
     status,
-    telecallerId,
-    assignedTelecaller,
-    unassigned,
     page = 1,
     limit = 10,
     sortBy = 'createdAt',
@@ -78,6 +86,7 @@ const getCustomers = asyncHandler(async (req, res) => {
   const conditions = [];
 
   if (req.user.role !== 'admin') {
+    // Telecaller can ONLY access their own assigned contacts
     conditions.push({
       $or: [
         { telecallerId: req.user._id },
@@ -85,22 +94,16 @@ const getCustomers = asyncHandler(async (req, res) => {
       ],
     });
   } else {
-    // Admin filtering controls
-    if (unassigned === 'true' || telecallerId === 'unassigned') {
-      conditions.push({
-        $or: [
-          { telecallerId: null },
-          { telecallerId: { $exists: false } },
-          { assignedTelecaller: 'Unassigned' },
-          { assignedTelecaller: '' },
-          { assignedTelecaller: null },
-        ],
-      });
-    } else if (telecallerId) {
-      conditions.push({ telecallerId });
-    } else if (assignedTelecaller) {
-      conditions.push({ assignedTelecaller });
-    }
+    // Admin CANNOT access contacts assigned to callers! Admin only sees unassigned contacts for assignment.
+    conditions.push({
+      $or: [
+        { telecallerId: null },
+        { telecallerId: { $exists: false } },
+        { assignedTelecaller: 'Unassigned' },
+        { assignedTelecaller: '' },
+        { assignedTelecaller: null },
+      ],
+    });
   }
 
   if (city) conditions.push({ city: new RegExp(escapeRegex(city.trim()), 'i') });
@@ -142,13 +145,28 @@ const getCustomers = asyncHandler(async (req, res) => {
 // @route   GET /api/customers/:id
 // @access  Private
 const getCustomerById = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const customer = await Customer.findOne(filter);
+  const customer = await Customer.findById(req.params.id);
 
   if (!customer) {
     res.status(404);
-    throw new Error('Customer not found or not assigned to your account');
+    throw new Error('Customer not found');
   }
+
+  if (req.user.role === 'admin') {
+    const isAssigned = customer.telecallerId || (customer.assignedTelecaller && customer.assignedTelecaller !== 'Unassigned');
+    if (isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: Administrators cannot access contacts assigned to telecallers');
+    }
+  } else {
+    const isAssignedToMe = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                           customer.assignedTelecaller === req.user.name;
+    if (!isAssignedToMe) {
+      res.status(403);
+      throw new Error('Access denied: You can only access contacts assigned to your account');
+    }
+  }
+
   res.json({ success: true, customer });
 });
 

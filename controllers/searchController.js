@@ -17,7 +17,7 @@ const globalSearch = asyncHandler(async (req, res) => {
     $or: [{ name: regex }, { mobile: regex }, { email: regex }, { company: regex }, { city: regex }],
   };
 
-  let filter = searchCondition;
+  let filter;
   if (req.user.role === 'telecaller') {
     filter = {
       $and: [
@@ -26,6 +26,22 @@ const globalSearch = asyncHandler(async (req, res) => {
           $or: [
             { telecallerId: req.user._id },
             { assignedTelecaller: req.user.name },
+          ],
+        },
+      ],
+    };
+  } else {
+    // Admin CANNOT access contacts assigned to callers! Admin only searches unassigned contacts.
+    filter = {
+      $and: [
+        searchCondition,
+        {
+          $or: [
+            { telecallerId: null },
+            { telecallerId: { $exists: false } },
+            { assignedTelecaller: 'Unassigned' },
+            { assignedTelecaller: '' },
+            { assignedTelecaller: null },
           ],
         },
       ],

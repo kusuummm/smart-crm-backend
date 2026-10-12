@@ -24,9 +24,9 @@ const protect = asyncHandler(async (req, res, next) => {
       res.status(401);
       throw new Error('Not authorized, user no longer exists');
     }
-    if (user.status !== 'active') {
+    if (user.status !== 'active' || user.isApproved === false) {
       res.status(403);
-      throw new Error('Account is disabled. Contact your administrator.');
+      throw new Error('Account is pending administrator approval or disabled. Contact your administrator.');
     }
 
     // Confirm this specific session hasn't been logged out / revoked from
@@ -42,6 +42,11 @@ const protect = asyncHandler(async (req, res, next) => {
         throw new Error('Session expired or was signed out from another device. Please log in again.');
       }
       req.sessionId = decoded.sid;
+    }
+
+    // Keep user's real-time presence updated
+    if (!user.isOnline || !user.lastActive || Date.now() - new Date(user.lastActive).getTime() > 60000) {
+      User.updateOne({ _id: user._id }, { $set: { isOnline: true, lastActive: new Date() } }).catch(() => {});
     }
 
     req.user = user;

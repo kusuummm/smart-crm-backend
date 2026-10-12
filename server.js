@@ -21,6 +21,10 @@ const emailRoutes = require('./routes/emailRoutes');
 const whatsappRoutes = require('./routes/whatsappRoutes');
 const eventRoutes = require('./routes/eventRoutes');
 const reportRoutes = require('./routes/reportRoutes');
+const broadcastRoutes = require('./routes/broadcastRoutes');
+const noteRoutes = require('./routes/noteRoutes');
+const walletRoutes = require('./routes/walletRoutes');
+const telephonyRoutes = require('./routes/telephonyRoutes');
 
 connectDB();
 
@@ -149,6 +153,18 @@ app.use(['/api/events', '/events'], eventRoutes);
 
 // Reports
 app.use(['/api/reports', '/reports'], reportRoutes);
+
+// Broadcast Campaigns
+app.use(['/api/broadcast', '/broadcast'], broadcastRoutes);
+
+// Call Notes
+app.use(['/api/notes', '/notes'], noteRoutes);
+
+// Wallet & Credits
+app.use(['/api/wallet', '/wallet'], walletRoutes);
+
+// Telephony & Provider Webhooks
+app.use(['/api/telephony', '/telephony'], telephonyRoutes);
 
 
 // ================= ERROR HANDLING =================

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const LEAD_STATUSES = ['new', 'contacted', 'interested', 'follow-up', 'converted', 'not-interested', 'closed'];
+const LEAD_STATUSES = ['new', 'contacted', 'interested', 'meeting', 'follow-up', 'converted', 'not-interested', 'closed'];
 
 const historyEntrySchema = new mongoose.Schema(
   {

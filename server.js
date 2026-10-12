@@ -25,6 +25,8 @@ const broadcastRoutes = require('./routes/broadcastRoutes');
 const noteRoutes = require('./routes/noteRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const telephonyRoutes = require('./routes/telephonyRoutes');
+const meetingRoutes = require('./routes/meetingRoutes');
+const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 
 connectDB();
 
@@ -166,6 +168,9 @@ app.use(['/api/wallet', '/wallet'], walletRoutes);
 // Telephony & Provider Webhooks
 app.use(['/api/telephony', '/telephony'], telephonyRoutes);
 
+// Meetings & Auto 1-Hour Reminder
+app.use(['/api/meetings', '/meetings'], meetingRoutes);
+
 
 // ================= ERROR HANDLING =================
 
@@ -181,4 +186,5 @@ app.listen(PORT, () => {
   console.log(
     `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
   );
+  startMeetingReminderScheduler(60000);
 });

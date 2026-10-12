@@ -17,7 +17,15 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Email and password are required');
   }
 
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  const normalizedEmail = email.toString().trim().toLowerCase();
+
+  // If browser autofilled OTP code instead of email
+  if (/^\d{4,8}$/.test(normalizedEmail)) {
+    res.status(400);
+    throw new Error('Please enter your registered email address and password to log in (not the OTP code).');
+  }
+
+  const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
   if (!user || !(await user.matchPassword(password))) {
     res.status(401);

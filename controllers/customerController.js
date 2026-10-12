@@ -207,9 +207,9 @@ const updateCustomer = asyncHandler(async (req, res) => {
 // @route   DELETE /api/customers/:id
 // @access  Private/Admin
 const deleteCustomer = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  if (req.user.role !== 'admin' && req.user.role !== 'telecaller') {
     res.status(403);
-    throw new Error('Only administrators can delete customer records');
+    throw new Error('Only authorized users can delete customer records');
   }
 
   const customer = await Customer.findById(req.params.id);
@@ -278,11 +278,11 @@ const bulkAssignCustomers = asyncHandler(async (req, res) => {
 
 // @desc    Bulk delete multiple customers
 // @route   POST /api/customers/bulk-delete
-// @access  Private/Admin
+// @access  Private/Admin/Telecaller
 const bulkDeleteCustomers = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  if (req.user.role !== 'admin' && req.user.role !== 'telecaller') {
     res.status(403);
-    throw new Error('Only administrators can bulk delete customers');
+    throw new Error('Only authorized users can bulk delete customers');
   }
 
   const { customerIds } = req.body;

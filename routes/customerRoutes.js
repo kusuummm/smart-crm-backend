@@ -13,11 +13,11 @@ const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
 
-// Bulk operations (Admin only) - MUST come before /:id parameter route
+// Bulk operations - MUST come before /:id parameter route
 router.post('/bulk-assign', authorize('admin'), bulkAssignCustomers);
-router.post('/bulk-delete', authorize('admin'), bulkDeleteCustomers);
+router.post('/bulk-delete', bulkDeleteCustomers);
 
 router.route('/').post(createCustomer).get(getCustomers);
-router.route('/:id').get(getCustomerById).put(updateCustomer).delete(authorize('admin'), deleteCustomer);
+router.route('/:id').get(getCustomerById).put(updateCustomer).delete(deleteCustomer);
 
 module.exports = router;

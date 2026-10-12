@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const FollowUp = require('../models/FollowUp');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
+const { sendFollowUpScheduleEmails } = require('../services/followUpEmailService');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -56,6 +57,10 @@ const createFollowUp = asyncHandler(async (req, res) => {
     createdBy,
     createdByName,
   });
+
+  // Send email to both customer and telecaller
+  sendFollowUpScheduleEmails({ followUp, actionType: 'scheduled', updatedByUser: req.user })
+    .catch((err) => console.error('[createFollowUp] Email error:', err.message));
 
   res.status(201).json({ success: true, followUp });
 });
@@ -174,6 +179,10 @@ const updateFollowUp = asyncHandler(async (req, res) => {
 
   Object.assign(followUp, req.body);
   await followUp.save();
+
+  // Send email to both customer and telecaller on update/reschedule
+  sendFollowUpScheduleEmails({ followUp, actionType: 'rescheduled', updatedByUser: req.user })
+    .catch((err) => console.error('[updateFollowUp] Email error:', err.message));
 
   res.json({ success: true, followUp });
 });

@@ -5,7 +5,7 @@ const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
 
-router.route('/').post(createLead).get(getLeads);
+router.route('/').post(authorize('admin'), createLead).get(getLeads);
 router.route('/:id').get(getLeadById).delete(authorize('admin'), deleteLead);
 router.put('/:id/status', updateLeadStatus);
 

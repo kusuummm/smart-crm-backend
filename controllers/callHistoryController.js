@@ -106,6 +106,7 @@ const getCalls = asyncHandler(async (req, res) => {
 
   const [calls, total] = await Promise.all([
     CallHistory.find(filter)
+      .populate('customerId', 'name mobile phone email company city')
       .sort({ date: -1, time: -1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),

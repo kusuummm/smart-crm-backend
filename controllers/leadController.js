@@ -74,6 +74,7 @@ const getLeads = asyncHandler(async (req, res) => {
 
   const [leads, total] = await Promise.all([
     Lead.find(filter)
+      .populate('customerId', 'name mobile alternateNumber email company city status leadSource')
       .sort({ createdAt: -1 })
       .skip((pageNum - 1) * limitNum)
       .limit(limitNum),

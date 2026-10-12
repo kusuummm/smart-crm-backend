@@ -1,6 +1,7 @@
 const asyncHandler = require('express-async-handler');
 const Lead = require('../models/Lead');
 const Customer = require('../models/Customer');
+const User = require('../models/User');
 const { escapeRegex } = require('../utils/regexHelper');
 const { sendFollowUpStatusChangeEmails } = require('../services/followUpEmailService');
 
@@ -232,7 +233,211 @@ const deleteLead = asyncHandler(async (req, res) => {
   }
 
   await lead.deleteOne();
-  res.json({ success: true, message: 'Lead deleted successfully' });
+  res.json({ success: true, message: 'Lead removed' });
 });
 
-module.exports = { createLead, getLeads, getLeadById, updateLeadStatus, deleteLead };
+// @desc    High-performance chunked bulk import & assignment of leads from Excel/CSV (ADMIN ONLY)
+// @route   POST /api/leads/bulk-import
+// @access  Private/Admin
+const bulkImportLeads = asyncHandler(async (req, res) => {
+  if (req.user.role !== 'admin') {
+    res.status(403);
+    throw new Error('Only administrators can import and assign leads');
+  }
+
+  const {
+    batch = [],
+    assignmentStrategy = 'unassigned', // 'round-robin' | 'direct' | 'unassigned'
+    telecallerIds = [],
+    skipDuplicates = true,
+    batchName = '',
+    roundRobinOffset = 0,
+  } = req.body;
+
+  if (!Array.isArray(batch) || batch.length === 0) {
+    return res.json({
+      success: true,
+      processed: 0,
+      imported: 0,
+      duplicatesSkipped: 0,
+      invalidCount: 0,
+      callerBreakdown: {},
+    });
+  }
+
+  // Load target telecallers if assigned
+  let callers = [];
+  if (['round-robin', 'direct'].includes(assignmentStrategy) && telecallerIds.length > 0) {
+    callers = await User.find({
+      _id: { $in: telecallerIds },
+      isApproved: true,
+      status: 'active',
+    }).select('_id name email phone');
+  }
+
+  // 1. Sanitize & clean batch records
+  const validRows = [];
+  let invalidCount = 0;
+
+  for (const row of batch) {
+    const rawName = (row.name || row.customerName || '').toString().trim();
+    let rawMobile = (row.mobile || row.phone || row.contactNumber || '').toString().replace(/\D/g, '');
+
+    // Normalize Indian mobile numbers:
+    // If 12 digits and starts with '91', strip '91'
+    if (rawMobile.length === 12 && rawMobile.startsWith('91')) {
+      rawMobile = rawMobile.substring(2);
+    } else if (rawMobile.length === 11 && rawMobile.startsWith('0')) {
+      rawMobile = rawMobile.substring(1);
+    }
+
+    if (!rawName || rawMobile.length < 10) {
+      invalidCount++;
+      continue;
+    }
+
+    // Keep standardized 10-digit mobile
+    const cleanMobile = rawMobile.slice(-10);
+
+    validRows.push({
+      name: rawName,
+      mobile: cleanMobile,
+      alternateNumber: (row.alternateNumber || '').toString().trim(),
+      email: (row.email || '').toString().trim().toLowerCase(),
+      company: (row.company || '').toString().trim(),
+      city: (row.city || '').toString().trim(),
+      state: (row.state || '').toString().trim(),
+      leadSource: row.leadSource || 'Other',
+      interestedProduct: (row.interestedProduct || row.product || '').toString().trim(),
+      remarks: (row.remarks || row.notes || '').toString().trim(),
+    });
+  }
+
+  if (validRows.length === 0) {
+    return res.json({
+      success: true,
+      processed: batch.length,
+      imported: 0,
+      duplicatesSkipped: 0,
+      invalidCount,
+      callerBreakdown: {},
+    });
+  }
+
+  // 2. In-batch deduplication (first occurrence wins)
+  const uniqueInBatch = [];
+  const seenMobiles = new Set();
+  let inBatchDuplicates = 0;
+
+  for (const row of validRows) {
+    if (seenMobiles.has(row.mobile)) {
+      inBatchDuplicates++;
+      continue;
+    }
+    seenMobiles.add(row.mobile);
+    uniqueInBatch.push(row);
+  }
+
+  // 3. Database deduplication against existing customers
+  let rowsToInsert = uniqueInBatch;
+  let dbDuplicatesCount = 0;
+
+  if (skipDuplicates) {
+    const allMobiles = uniqueInBatch.map((r) => r.mobile);
+    const existingCustomers = await Customer.find({ mobile: { $in: allMobiles } }).select('mobile');
+    const existingMobileSet = new Set(existingCustomers.map((c) => c.mobile));
+
+    rowsToInsert = uniqueInBatch.filter((r) => {
+      if (existingMobileSet.has(r.mobile)) {
+        dbDuplicatesCount++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  const totalDuplicatesSkipped = inBatchDuplicates + dbDuplicatesCount;
+
+  if (rowsToInsert.length === 0) {
+    return res.json({
+      success: true,
+      processed: batch.length,
+      imported: 0,
+      duplicatesSkipped: totalDuplicatesSkipped,
+      invalidCount,
+      callerBreakdown: {},
+    });
+  }
+
+  // 4. Assign telecallers according to selected strategy
+  const callerBreakdown = {};
+  const customerDocs = [];
+
+  for (let i = 0; i < rowsToInsert.length; i++) {
+    const row = rowsToInsert[i];
+    let assignedCaller = null;
+
+    if (assignmentStrategy === 'round-robin' && callers.length > 0) {
+      const idx = (roundRobinOffset + i) % callers.length;
+      assignedCaller = callers[idx];
+    } else if (assignmentStrategy === 'direct' && callers.length > 0) {
+      assignedCaller = callers[0];
+    }
+
+    if (assignedCaller) {
+      callerBreakdown[assignedCaller.name] = (callerBreakdown[assignedCaller.name] || 0) + 1;
+    } else {
+      callerBreakdown['Unassigned'] = (callerBreakdown['Unassigned'] || 0) + 1;
+    }
+
+    customerDocs.push({
+      name: row.name,
+      mobile: row.mobile,
+      alternateNumber: row.alternateNumber,
+      email: row.email,
+      company: row.company,
+      city: row.city,
+      state: row.state,
+      leadSource: row.leadSource,
+      interestedProduct: row.interestedProduct,
+      status: 'active',
+      assignedTelecaller: assignedCaller ? assignedCaller.name : 'Unassigned',
+      telecallerId: assignedCaller ? assignedCaller._id : null,
+      remarks: row.remarks || (batchName ? `Imported: ${batchName}` : 'Excel Import'),
+    });
+  }
+
+  // 5. High-speed bulk insertion of Customers
+  const createdCustomers = await Customer.insertMany(customerDocs, { ordered: false });
+
+  // 6. Automatically generate corresponding Lead pipeline documents
+  const leadDocs = createdCustomers.map((c) => ({
+    customerId: c._id,
+    customerName: c.name,
+    status: 'new',
+    telecallerId: c.telecallerId,
+    history: [
+      {
+        status: 'new',
+        date: new Date(),
+        remark: batchName ? `Imported via batch: ${batchName}` : 'Imported via Excel spreadsheet',
+        updatedBy: req.user._id,
+      },
+    ],
+  }));
+
+  if (leadDocs.length > 0) {
+    await Lead.insertMany(leadDocs, { ordered: false });
+  }
+
+  res.json({
+    success: true,
+    processed: batch.length,
+    imported: createdCustomers.length,
+    duplicatesSkipped: totalDuplicatesSkipped,
+    invalidCount,
+    callerBreakdown,
+  });
+});
+
+module.exports = { createLead, getLeads, getLeadById, updateLeadStatus, deleteLead, bulkImportLeads };

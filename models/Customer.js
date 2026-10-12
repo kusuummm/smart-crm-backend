@@ -23,6 +23,8 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Support fast deduplication and lookup by mobile
+customerSchema.index({ mobile: 1 });
 // Support global search by name, mobile, email, company, city
 customerSchema.index({ name: 'text', mobile: 'text', email: 'text', company: 'text', city: 'text' });
 

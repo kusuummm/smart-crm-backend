@@ -460,6 +460,380 @@ const heartbeat = asyncHandler(async (req, res) => {
   res.json({ success: true, isOnline: true, lastActive: new Date() });
 });
 
+const parseDurationToSeconds = (dur) => {
+  if (!dur) return 0;
+  if (typeof dur === 'number') return dur;
+  const str = String(dur).toLowerCase().trim();
+  let total = 0;
+  const mMatch = str.match(/(\d+)\s*m/);
+  const sMatch = str.match(/(\d+)\s*s/);
+  if (mMatch) total += parseInt(mMatch[1], 10) * 60;
+  if (sMatch) total += parseInt(sMatch[1], 10);
+  if (!mMatch && !sMatch) {
+    const num = parseInt(str, 10);
+    if (!isNaN(num)) total = num;
+  }
+  return total;
+};
+
+// @desc    Get overall aggregate progress report of callers across a period
+// @route   GET /api/users/callers-progress-report?period=7d&startDate=&endDate=
+// @access  Private/Admin
+const getCallersProgressReport = asyncHandler(async (req, res) => {
+  const { period = '7d', startDate: customStart, endDate: customEnd } = req.query;
+
+  const now = new Date();
+  let start = new Date();
+  let end = new Date();
+  end.setHours(23, 59, 59, 999);
+
+  if (customStart && customEnd) {
+    start = new Date(customStart + 'T00:00:00');
+    end = new Date(customEnd + 'T23:59:59');
+  } else if (period === 'today') {
+    start.setHours(0, 0, 0, 0);
+  } else if (period === '14d') {
+    start.setDate(now.getDate() - 13);
+    start.setHours(0, 0, 0, 0);
+  } else if (period === '30d') {
+    start.setDate(now.getDate() - 29);
+    start.setHours(0, 0, 0, 0);
+  } else if (period === 'this-month') {
+    start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+  } else {
+    // default 7d
+    start.setDate(now.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+  }
+
+  const startStr = start.toISOString().split('T')[0];
+  const endStr = end.toISOString().split('T')[0];
+
+  const telecallers = await User.find({
+    role: { $in: ['telecaller', 'Telecaller'] },
+    isApproved: true,
+  }).select('_id name email avatar phone isOnline');
+
+  const calls = await CallHistory.find({
+    date: { $gte: startStr, $lte: endStr },
+  }).populate('customerId', 'name mobile phone company city');
+
+  const leads = await Lead.find({
+    $or: [
+      { createdAt: { $gte: start, $lte: end } },
+      { 'history.date': { $gte: start, $lte: end } },
+    ],
+  }).populate('customerId', 'name mobile phone company city');
+
+  const daysArray = [];
+  const cur = new Date(start);
+  while (cur <= end) {
+    const dStr = cur.toISOString().split('T')[0];
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    daysArray.push({
+      date: dStr,
+      displayDate: `${monthNames[cur.getMonth()]} ${cur.getDate()}`,
+      dayName: dayNames[cur.getDay()],
+    });
+    cur.setDate(cur.getDate() + 1);
+  }
+
+  let totalCalls = 0;
+  let totalConnected = 0;
+  let totalMissed = 0;
+  let totalBusy = 0;
+  let totalDurationSec = 0;
+  let totalLeadsFollowedUp = 0;
+  let totalConversions = 0;
+  const activeCallerIdSet = new Set();
+
+  const dailyTrend = daysArray.map((dayObj) => {
+    const dayCalls = calls.filter((c) => c.date === dayObj.date);
+    const dayConnected = dayCalls.filter((c) => c.status === 'connected');
+    const dayMissed = dayCalls.filter((c) => c.status === 'missed');
+    const dayBusy = dayCalls.filter((c) => c.status === 'busy');
+
+    let dayDurSec = 0;
+    const dayCallerSet = new Set();
+    dayCalls.forEach((c) => {
+      dayDurSec += parseDurationToSeconds(c.duration);
+      if (c.calledBy) {
+        dayCallerSet.add(String(c.calledBy));
+        activeCallerIdSet.add(String(c.calledBy));
+      }
+    });
+
+    let dayLeadsUpdated = 0;
+    let dayConversions = 0;
+    leads.forEach((l) => {
+      if (l.history && l.history.length > 0) {
+        l.history.forEach((h) => {
+          if (h.date) {
+            const hDateStr = new Date(h.date).toISOString().split('T')[0];
+            if (hDateStr === dayObj.date) {
+              dayLeadsUpdated++;
+              if (h.status === 'converted') dayConversions++;
+              if (h.updatedBy) {
+                dayCallerSet.add(String(h.updatedBy));
+                activeCallerIdSet.add(String(h.updatedBy));
+              }
+            }
+          }
+        });
+      }
+    });
+
+    totalCalls += dayCalls.length;
+    totalConnected += dayConnected.length;
+    totalMissed += dayMissed.length;
+    totalBusy += dayBusy.length;
+    totalDurationSec += dayDurSec;
+    totalLeadsFollowedUp += dayLeadsUpdated;
+    totalConversions += dayConversions;
+
+    const dayDurMin = Math.round(dayDurSec / 60);
+
+    return {
+      date: dayObj.date,
+      displayDate: dayObj.displayDate,
+      dayName: dayObj.dayName,
+      totalCalls: dayCalls.length,
+      connectedCalls: dayConnected.length,
+      missedCalls: dayMissed.length,
+      busyCalls: dayBusy.length,
+      durationMinutes: dayDurMin,
+      durationFormatted: `${Math.floor(dayDurMin / 60)}h ${dayDurMin % 60}m`,
+      leadsFollowedUp: dayLeadsUpdated,
+      conversions: dayConversions,
+      activeCallersCount: dayCallerSet.size,
+    };
+  });
+
+  const callersBreakdown = telecallers.map((t) => {
+    const tCalls = calls.filter((c) => String(c.calledBy) === String(t._id));
+    const tConnected = tCalls.filter((c) => c.status === 'connected');
+    let tDurSec = 0;
+    tCalls.forEach((c) => {
+      tDurSec += parseDurationToSeconds(c.duration);
+    });
+
+    let tLeadsUpdated = 0;
+    let tConversions = 0;
+    leads.forEach((l) => {
+      if (String(l.telecallerId) === String(t._id)) {
+        if (l.history) {
+          l.history.forEach((h) => {
+            if (h.date) {
+              const hDateStr = new Date(h.date).toISOString().split('T')[0];
+              if (hDateStr >= startStr && hDateStr <= endStr) {
+                tLeadsUpdated++;
+                if (h.status === 'converted') tConversions++;
+              }
+            }
+          });
+        }
+      }
+    });
+
+    const tDurMin = Math.round(tDurSec / 60);
+    const convRate = tCalls.length > 0 ? ((tConversions / tCalls.length) * 100).toFixed(1) + '%' : '0.0%';
+
+    return {
+      callerId: t._id,
+      name: t.name,
+      email: t.email,
+      phone: t.phone || '',
+      avatar: t.avatar || t.name.slice(0, 2).toUpperCase(),
+      isOnline: Boolean(t.isOnline),
+      totalCalls: tCalls.length,
+      connectedCalls: tConnected.length,
+      totalDurationMinutes: tDurMin,
+      leadsFollowedUp: tLeadsUpdated,
+      conversions: tConversions,
+      conversionRate: convRate,
+    };
+  }).sort((a, b) => b.totalCalls - a.totalCalls);
+
+  const stageCounts = {
+    new: 0,
+    contacted: 0,
+    interested: 0,
+    meeting: 0,
+    'follow-up': 0,
+    converted: 0,
+    'not-interested': 0,
+    closed: 0,
+  };
+  leads.forEach((l) => {
+    if (stageCounts[l.status] !== undefined) {
+      stageCounts[l.status]++;
+    }
+  });
+
+  const pipelineDistribution = [
+    { name: 'New Follow-up', status: 'new', count: stageCounts['new'], color: '#3b82f6' },
+    { name: 'Contacted', status: 'contacted', count: stageCounts['contacted'], color: '#f59e0b' },
+    { name: 'Interested', status: 'interested', count: stageCounts['interested'], color: '#8b5cf6' },
+    { name: 'Meeting Scheduled', status: 'meeting', count: stageCounts['meeting'], color: '#6366f1' },
+    { name: 'In Progress', status: 'follow-up', count: stageCounts['follow-up'], color: '#ea580c' },
+    { name: 'Converted / Won', status: 'converted', count: stageCounts['converted'], color: '#10b981' },
+    { name: 'Not Interested', status: 'not-interested', count: stageCounts['not-interested'], color: '#ef4444' },
+    { name: 'Closed', status: 'closed', count: stageCounts['closed'], color: '#6b7280' },
+  ];
+
+  const totalDurMin = Math.round(totalDurationSec / 60);
+  const avgSec = totalConnected > 0 ? Math.round(totalDurationSec / totalConnected) : 0;
+  const avgFormatted = `${Math.floor(avgSec / 60)}m ${avgSec % 60}s`;
+
+  res.json({
+    success: true,
+    period,
+    startDate: startStr,
+    endDate: endStr,
+    summary: {
+      totalCalls,
+      connectedCalls: totalConnected,
+      missedCalls: totalMissed,
+      busyCalls: totalBusy,
+      totalDurationMinutes: totalDurMin,
+      totalDurationFormatted: `${Math.floor(totalDurMin / 60)}h ${totalDurMin % 60}m`,
+      avgCallDuration: avgFormatted,
+      totalLeadsFollowedUp,
+      totalConversions,
+      overallConversionRate: totalCalls > 0 ? ((totalConversions / totalCalls) * 100).toFixed(1) + '%' : '0.0%',
+      activeCallersCount: activeCallerIdSet.size,
+      totalRegisteredCallers: telecallers.length,
+      topPerformingCaller: callersBreakdown[0] || null,
+    },
+    dailyTrend,
+    pipelineDistribution,
+    callOutcomes: [
+      { name: 'Connected', value: totalConnected, color: '#10b981' },
+      { name: 'Missed', value: totalMissed, color: '#ef4444' },
+      { name: 'Busy', value: totalBusy, color: '#f59e0b' },
+    ],
+    callersBreakdown,
+  });
+});
+
+// @desc    Get detailed audit and call logs for a specific day or metric category
+// @route   GET /api/users/callers-progress-detail?date=YYYY-MM-DD&status=&callerId=
+// @access  Private/Admin
+const getCallersProgressDetail = asyncHandler(async (req, res) => {
+  const { date, status, callerId } = req.query;
+  const targetDate = date || new Date().toISOString().split('T')[0];
+
+  const callQuery = { date: targetDate };
+  if (status) callQuery.status = status;
+  if (callerId) callQuery.calledBy = callerId;
+
+  const [calls, leads, telecallers] = await Promise.all([
+    CallHistory.find(callQuery)
+      .populate('customerId', 'name mobile phone company city')
+      .populate('calledBy', 'name email avatar phone')
+      .sort({ time: -1 }),
+    Lead.find({
+      'history.date': {
+        $gte: new Date(targetDate + 'T00:00:00.000Z'),
+        $lte: new Date(targetDate + 'T23:59:59.999Z'),
+      },
+    })
+      .populate('customerId', 'name mobile phone company city')
+      .populate('telecallerId', 'name email avatar'),
+    User.find({ role: { $in: ['telecaller', 'Telecaller'] } }).select('_id name email avatar phone isOnline'),
+  ]);
+
+  const callerStatsMap = {};
+  telecallers.forEach((t) => {
+    callerStatsMap[String(t._id)] = {
+      callerId: t._id,
+      name: t.name,
+      email: t.email,
+      avatar: t.avatar || t.name.slice(0, 2).toUpperCase(),
+      phone: t.phone || '',
+      callsCount: 0,
+      connectedCount: 0,
+      missedCount: 0,
+      durationSeconds: 0,
+      leadsUpdated: 0,
+      conversions: 0,
+    };
+  });
+
+  const formattedLogs = [];
+
+  calls.forEach((c) => {
+    const callerIdStr = c.calledBy?._id ? String(c.calledBy._id) : (c.calledBy ? String(c.calledBy) : null);
+    const durSec = parseDurationToSeconds(c.duration);
+    if (callerIdStr && callerStatsMap[callerIdStr]) {
+      callerStatsMap[callerIdStr].callsCount++;
+      if (c.status === 'connected') callerStatsMap[callerIdStr].connectedCount++;
+      if (c.status === 'missed') callerStatsMap[callerIdStr].missedCount++;
+      callerStatsMap[callerIdStr].durationSeconds += durSec;
+    }
+
+    formattedLogs.push({
+      id: c._id,
+      time: c.time || '10:00',
+      type: 'call',
+      callerName: c.calledBy?.name || c.calledByName || 'Telecaller',
+      customerName: c.customerName || c.customerId?.name || 'Customer',
+      customerPhone: c.customerId?.mobile || c.customerId?.phone || '',
+      customerCompany: c.customerId?.company || '',
+      status: c.status,
+      duration: c.duration,
+      remarks: c.remarks || 'Outbound customer interaction',
+      sentiment: c.aiSummary?.sentiment || 'Neutral',
+    });
+  });
+
+  leads.forEach((l) => {
+    if (l.history && l.history.length > 0) {
+      l.history.forEach((h) => {
+        if (h.date) {
+          const hDateStr = new Date(h.date).toISOString().split('T')[0];
+          if (hDateStr === targetDate) {
+            const updaterIdStr = h.updatedBy ? String(h.updatedBy) : (l.telecallerId ? String(l.telecallerId._id || l.telecallerId) : null);
+            if (updaterIdStr && callerStatsMap[updaterIdStr]) {
+              callerStatsMap[updaterIdStr].leadsUpdated++;
+              if (h.status === 'converted') callerStatsMap[updaterIdStr].conversions++;
+            }
+
+            formattedLogs.push({
+              id: `${l._id}-${new Date(h.date).getTime()}`,
+              time: new Date(h.date).toTimeString().slice(0, 5),
+              type: 'lead-update',
+              callerName: l.telecallerId?.name || 'Assigned Caller',
+              customerName: l.customerName || l.customerId?.name || 'Customer',
+              customerPhone: l.customerId?.mobile || l.customerId?.phone || '',
+              customerCompany: l.customerId?.company || '',
+              status: h.status,
+              duration: '-',
+              remarks: h.remark || `Follow-up status updated to ${h.status}`,
+              sentiment: h.status === 'converted' ? 'Positive' : 'Neutral',
+            });
+          }
+        }
+      });
+    }
+  });
+
+  formattedLogs.sort((a, b) => (b.time > a.time ? 1 : -1));
+
+  const activeCallersThisDay = Object.values(callerStatsMap).filter((c) => c.callsCount > 0 || c.leadsUpdated > 0);
+
+  res.json({
+    success: true,
+    date: targetDate,
+    totalCalls: calls.length,
+    connectedCalls: calls.filter((c) => c.status === 'connected').length,
+    totalLogs: formattedLogs.length,
+    activeCallersThisDay,
+    logs: formattedLogs,
+  });
+});
+
 module.exports = {
   createUser,
   getUsers,
@@ -474,5 +848,7 @@ module.exports = {
   approveUser,
   rejectUser,
   heartbeat,
+  getCallersProgressReport,
+  getCallersProgressDetail,
 };
 

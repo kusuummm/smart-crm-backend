@@ -14,6 +14,8 @@ const {
   approveUser,
   rejectUser,
   heartbeat,
+  getCallersProgressReport,
+  getCallersProgressDetail,
 } = require('../controllers/userController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -27,6 +29,8 @@ router.use(protect, authorize('admin'));
 router.post('/reassign-workload', reassignWorkload);
 router.get('/system-overview', getSystemOverview);
 router.get('/audit-logs', getAuditLogs);
+router.get('/callers-progress-report', getCallersProgressReport);
+router.get('/callers-progress-detail', getCallersProgressDetail);
 
 router.route('/').post(createUser).get(getUsers);
 router.put('/:id/approve', approveUser);

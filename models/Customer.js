@@ -11,8 +11,8 @@ const customerSchema = new mongoose.Schema(
     state: { type: String, default: '' },
     leadSource: {
       type: String,
-      enum: ['Website', 'Referral', 'Social Media', 'Email Campaign', 'Cold Call', 'Trade Show', 'Other'],
       default: 'Other',
+      trim: true,
     },
     interestedProduct: { type: String, default: '' },
     status: { type: String, enum: ['active', 'inactive'], default: 'active' },

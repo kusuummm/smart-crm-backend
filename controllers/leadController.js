@@ -178,14 +178,14 @@ const getLeadById = asyncHandler(async (req, res) => {
   res.json({ success: true, lead });
 });
 
-// @desc    Update lead follow-up status - appends to history & dispatches email to both lead and customer
+// @desc    Update lead follow-up status or reassign lead - appends to history & dispatches email
 // @route   PUT /api/leads/:id/status
 // @access  Private
 const updateLeadStatus = asyncHandler(async (req, res) => {
   const { status, remark } = req.body;
-  if (!status) {
+  if (!status && req.body.telecallerId === undefined) {
     res.status(400);
-    throw new Error('Status is required');
+    throw new Error('Status or telecallerId is required');
   }
 
   const lead = await Lead.findById(req.params.id);
@@ -205,17 +205,39 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
     }
   }
 
-  lead.status = status;
-  if (req.user.role === 'admin' && req.body.telecallerId !== undefined) {
-    lead.telecallerId = req.body.telecallerId ? req.body.telecallerId : null;
-  }
-  lead.history.push({ status, date: new Date(), remark: remark || '', updatedBy: req.user._id });
-  await lead.save();
+  const nextStatus = status || lead.status;
+  lead.status = nextStatus;
 
-  // Keep Customer status synchronized with Lead stage
-  if (lead.customerId) {
-    await Customer.findByIdAndUpdate(lead.customerId, { status }).catch(() => {});
+  let assignedLeadChanged = false;
+  let newLeadName = '';
+
+  if (req.body.telecallerId !== undefined) {
+    const newTelecallerId = req.body.telecallerId && req.body.telecallerId !== 'unassigned' ? req.body.telecallerId : null;
+    lead.telecallerId = newTelecallerId;
+    assignedLeadChanged = true;
+
+    if (newTelecallerId) {
+      const tc = await User.findById(newTelecallerId);
+      newLeadName = tc ? tc.name : 'Assigned Lead';
+    } else {
+      newLeadName = 'Unassigned';
+    }
+
+    // Keep Customer document synchronized with new assigned lead
+    if (lead.customerId) {
+      await Customer.findByIdAndUpdate(lead.customerId, {
+        telecallerId: newTelecallerId,
+        assignedTelecaller: newLeadName,
+        status: nextStatus,
+      }).catch(() => {});
+    }
+  } else if (lead.customerId) {
+    await Customer.findByIdAndUpdate(lead.customerId, { status: nextStatus }).catch(() => {});
   }
+
+  const historyRemark = remark || (assignedLeadChanged ? `Assigned lead changed to ${newLeadName} by ${req.user.name || 'User'}` : `Status updated to ${nextStatus}`);
+  lead.history.push({ status: nextStatus, date: new Date(), remark: historyRemark, updatedBy: req.user._id });
+  await lead.save();
 
   const populatedLead = await Lead.findById(lead._id)
     .populate('customerId', 'name mobile alternateNumber email company city status leadSource');
@@ -223,8 +245,8 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
   // Trigger emails to both lead and customer whenever follow-up status changes
   const emailResult = await sendFollowUpStatusChangeEmails({
     lead: populatedLead,
-    newStatus: status,
-    remark: remark || '',
+    newStatus: nextStatus,
+    remark: historyRemark,
     updatedByUser: req.user,
   });
 

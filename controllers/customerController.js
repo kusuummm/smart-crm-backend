@@ -193,8 +193,18 @@ const getCustomerById = asyncHandler(async (req, res) => {
 // @route   PUT /api/customers/:id
 // @access  Private
 const updateCustomer = asyncHandler(async (req, res) => {
-  const filter = scopeToRole(req, { _id: req.params.id });
-  const customer = await Customer.findOne(filter);
+  let customer;
+  if (req.user.role === 'admin') {
+    customer = await Customer.findById(req.params.id);
+  } else {
+    customer = await Customer.findOne({
+      _id: req.params.id,
+      $or: [
+        { telecallerId: req.user._id },
+        { assignedTelecaller: req.user.name },
+      ],
+    });
+  }
 
   if (!customer) {
     res.status(404);
@@ -203,17 +213,32 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
   const updates = sanitizeCustomerPayload(req.body);
 
-  if (req.user.role !== 'admin') {
-    delete updates.telecallerId;
-    delete updates.assignedTelecaller;
-  } else if (updates.telecallerId) {
-    const tc = await User.findById(updates.telecallerId);
-    if (tc) updates.assignedTelecaller = tc.name;
-    await Lead.updateMany({ customerId: customer._id }, { telecallerId: updates.telecallerId });
-  } else if (updates.telecallerId === null || req.body.unassign === true) {
-    updates.telecallerId = null;
-    updates.assignedTelecaller = 'Unassigned';
-    await Lead.updateMany({ customerId: customer._id }, { telecallerId: null });
+  if (updates.telecallerId !== undefined || req.body.unassign === true) {
+    if (updates.telecallerId && updates.telecallerId !== 'unassigned') {
+      const tc = await User.findById(updates.telecallerId);
+      if (tc) {
+        updates.telecallerId = tc._id;
+        updates.assignedTelecaller = tc.name;
+      }
+    } else {
+      updates.telecallerId = null;
+      updates.assignedTelecaller = 'Unassigned';
+    }
+
+    await Lead.updateMany(
+      { customerId: customer._id },
+      {
+        $set: { telecallerId: updates.telecallerId },
+        $push: {
+          history: {
+            status: updates.status || customer.status || 'new',
+            date: new Date(),
+            remark: `Assigned lead changed to ${updates.assignedTelecaller} by ${req.user.name || 'User'}`,
+            updatedBy: req.user._id,
+          },
+        },
+      }
+    ).catch(() => {});
   }
 
   if (updates.status) {

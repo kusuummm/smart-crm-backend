@@ -13,6 +13,9 @@ const followUpSchema = new mongoose.Schema(
     status: { type: String, default: 'pending', trim: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     createdByName: { type: String, default: '' },
+    assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    assignedToName: { type: String, default: '' },
+    priority: { type: String, default: 'medium' },
   },
   { timestamps: true }
 );

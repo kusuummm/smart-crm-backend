@@ -68,9 +68,14 @@ const createFollowUp = asyncHandler(async (req, res) => {
 
   let createdBy = req.user._id;
   let createdByName = req.user.name;
-  if (req.user.role === 'admin' && assignedTo) {
+  let targetAssignedTo = req.user._id;
+  let targetAssignedToName = req.user.name;
+
+  if (assignedTo) {
     const assignedUser = await User.findById(assignedTo);
     if (assignedUser) {
+      targetAssignedTo = assignedUser._id;
+      targetAssignedToName = assignedUser.name;
       createdBy = assignedUser._id;
       createdByName = assignedUser.name;
     }
@@ -88,6 +93,9 @@ const createFollowUp = asyncHandler(async (req, res) => {
     status: 'pending',
     createdBy,
     createdByName,
+    assignedTo: targetAssignedTo,
+    assignedToName: targetAssignedToName,
+    priority: req.body.priority || 'medium',
   });
 
   // Send email to both customer and telecaller
@@ -109,6 +117,7 @@ const getFollowUps = asyncHandler(async (req, res) => {
       $or: [
         { createdBy: req.user._id },
         { createdByName: req.user.name },
+        { assignedTo: req.user._id },
       ],
     });
   } else if (req.user.role === 'admin' && telecallerId && telecallerId !== 'all') {
@@ -123,7 +132,12 @@ const getFollowUps = asyncHandler(async (req, res) => {
       }).distinct('_id');
       conditions.push({ customerId: { $in: unassignedCustIds } });
     } else {
-      conditions.push({ createdBy: telecallerId });
+      conditions.push({
+        $or: [
+          { createdBy: telecallerId },
+          { assignedTo: telecallerId },
+        ],
+      });
     }
   }
 
@@ -231,11 +245,13 @@ const updateFollowUp = asyncHandler(async (req, res) => {
     }
   }
 
-  if (req.user.role === 'admin' && req.body.assignedTo) {
+  if (req.body.assignedTo) {
     const assignedUser = await User.findById(req.body.assignedTo);
     if (assignedUser) {
       followUp.createdBy = assignedUser._id;
       followUp.createdByName = assignedUser.name;
+      followUp.assignedTo = assignedUser._id;
+      followUp.assignedToName = assignedUser.name;
     }
   }
 

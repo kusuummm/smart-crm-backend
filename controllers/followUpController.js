@@ -85,6 +85,8 @@ const createFollowUp = asyncHandler(async (req, res) => {
     customerId: customer._id,
     customerName: customer.name,
     phone: phone || customer.mobile || customer.phone || '',
+    email: req.body.email || customer.email || '',
+    company: req.body.company || customer.company || '',
     type: type || 'CALL',
     date,
     time,
@@ -96,6 +98,12 @@ const createFollowUp = asyncHandler(async (req, res) => {
     assignedTo: targetAssignedTo,
     assignedToName: targetAssignedToName,
     priority: req.body.priority || 'medium',
+    leadStatus: req.body.leadStatus || '',
+    dealValue: Number(req.body.dealValue) || 0,
+    reminderBefore: req.body.reminderBefore || '15 mins before',
+    meetingLink: req.body.meetingLink || '',
+    tags: Array.isArray(req.body.tags) ? req.body.tags : [],
+    checklist: Array.isArray(req.body.checklist) ? req.body.checklist : [],
   });
 
   // Send email to both customer and telecaller

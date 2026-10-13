@@ -216,7 +216,7 @@ const updateCustomer = asyncHandler(async (req, res) => {
 
 // @desc    Delete a customer
 // @route   DELETE /api/customers/:id
-// @access  Private/Admin
+// @access  Private/Admin/Telecaller
 const deleteCustomer = asyncHandler(async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'telecaller') {
     res.status(403);
@@ -228,6 +228,16 @@ const deleteCustomer = asyncHandler(async (req, res) => {
   if (!customer) {
     res.status(404);
     throw new Error('Customer not found');
+  }
+
+  // Telecallers cannot delete other telecallers' customers
+  if (req.user.role !== 'admin') {
+    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                       customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only delete contacts assigned to your account');
+    }
   }
 
   await customer.deleteOne();
@@ -303,11 +313,30 @@ const bulkDeleteCustomers = asyncHandler(async (req, res) => {
     throw new Error('customerIds array is required');
   }
 
+  const deleteFilter = { _id: { $in: customerIds } };
+  if (req.user.role !== 'admin') {
+    deleteFilter.$or = [
+      { telecallerId: req.user._id },
+      { assignedTelecaller: req.user.name },
+    ];
+  }
+
+  const matchingCustomers = await Customer.find(deleteFilter).select('_id');
+  const matchingIds = matchingCustomers.map((c) => c._id);
+
+  if (matchingIds.length === 0) {
+    return res.json({
+      success: true,
+      message: 'No matching authorized customer records found to delete',
+      deletedCount: 0,
+    });
+  }
+
   const [customerResult] = await Promise.all([
-    Customer.deleteMany({ _id: { $in: customerIds } }),
-    Lead.deleteMany({ customerId: { $in: customerIds } }),
-    FollowUp.deleteMany({ customerId: { $in: customerIds } }),
-    CallHistory.deleteMany({ customerId: { $in: customerIds } }),
+    Customer.deleteMany({ _id: { $in: matchingIds } }),
+    Lead.deleteMany({ customerId: { $in: matchingIds } }),
+    FollowUp.deleteMany({ customerId: { $in: matchingIds } }),
+    CallHistory.deleteMany({ customerId: { $in: matchingIds } }),
   ]);
 
   res.json({

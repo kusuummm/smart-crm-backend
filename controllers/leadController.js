@@ -110,7 +110,7 @@ const getLeads = asyncHandler(async (req, res) => {
   const { status, search, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
+  if (req.user.role !== 'admin') {
     // Caller strictly gets only their own assigned leads
     conditions.push({ telecallerId: req.user._id });
   }
@@ -157,7 +157,7 @@ const getLeadById = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  if (req.user.role !== 'admin') {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId?._id || lead.customerId));
@@ -187,7 +187,7 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  if (req.user.role !== 'admin') {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId));

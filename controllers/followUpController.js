@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const FollowUp = require('../models/FollowUp');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
@@ -14,23 +15,52 @@ const getTelecallerCustomerIds = async (user) => {
 // @route   POST /api/followups
 // @access  Private
 const createFollowUp = asyncHandler(async (req, res) => {
-  const { customerId, date, time, remarks, nextFollowUp, assignedTo } = req.body;
+  const { customerId, date, time, remarks, nextFollowUp, assignedTo, customerName, phone, type } = req.body;
 
-  if (!customerId || !date || !time) {
+  if (!date || !time) {
     res.status(400);
-    throw new Error('customerId, date and time are required');
+    throw new Error('date and time are required');
   }
 
-  const customer = await Customer.findById(customerId);
+  let customer = null;
+  if (customerId && mongoose.Types.ObjectId.isValid(customerId)) {
+    customer = await Customer.findById(customerId);
+  }
+
+  if (!customer && (phone || customerName)) {
+    const targetPhone = phone || '';
+    const cleanPhone = String(targetPhone).replace(/\D/g, '').slice(-10);
+    if (targetPhone) {
+      customer = await Customer.findOne({
+        $or: [
+          { mobile: targetPhone },
+          { phone: targetPhone },
+          { alternateNumber: targetPhone },
+          ...(cleanPhone ? [{ mobile: new RegExp(cleanPhone + '$') }, { phone: new RegExp(cleanPhone + '$') }] : []),
+        ],
+      });
+    }
+    if (!customer) {
+      customer = await Customer.create({
+        name: customerName || 'Customer',
+        mobile: targetPhone || '0000000000',
+        phone: targetPhone || '0000000000',
+        telecallerId: req.user._id,
+        assignedTelecaller: req.user.name,
+        status: 'customer',
+      });
+    }
+  }
+
   if (!customer) {
-    res.status(404);
-    throw new Error('Customer not found');
+    res.status(400);
+    throw new Error('Valid customerId or customer details (phone, customerName) are required');
   }
 
   if (req.user.role === 'telecaller') {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
-    if (!isAssigned) {
+    if (!isAssigned && customerId) {
       res.status(403);
       throw new Error('You can only schedule follow-ups for customers assigned to you');
     }
@@ -47,12 +77,14 @@ const createFollowUp = asyncHandler(async (req, res) => {
   }
 
   const followUp = await FollowUp.create({
-    customerId,
+    customerId: customer._id,
     customerName: customer.name,
+    phone: phone || customer.mobile || customer.phone || '',
+    type: type || 'CALL',
     date,
     time,
-    remarks,
-    nextFollowUp,
+    remarks: remarks || '',
+    nextFollowUp: nextFollowUp || '',
     status: 'pending',
     createdBy,
     createdByName,
@@ -66,17 +98,47 @@ const createFollowUp = asyncHandler(async (req, res) => {
 });
 
 // @desc    Get follow-ups (filter by status/date, pagination)
-// @route   GET /api/followups?status=&date=&page=1&limit=10&telecallerId=
+// @route   GET /api/followups?status=&date=&page=1&limit=10&telecallerId=&customerId=&phone=
 // @access  Private
 const getFollowUps = asyncHandler(async (req, res) => {
-  const { status, date, page = 1, limit = 10, telecallerId } = req.query;
+  const { status, date, page = 1, limit = 10, telecallerId, customerId, phone } = req.query;
   const conditions = [];
 
-  // Strict isolation: users only see their own scheduled follow-ups
-  conditions.push({ createdBy: req.user._id });
+  if (req.user.role === 'telecaller') {
+    conditions.push({
+      $or: [
+        { createdBy: req.user._id },
+        { createdByName: req.user.name },
+      ],
+    });
+  } else if (req.user.role === 'admin' && telecallerId && telecallerId !== 'all') {
+    if (telecallerId === 'unassigned') {
+      const unassignedCustIds = await Customer.find({
+        $or: [
+          { telecallerId: null, assignedTelecaller: null },
+          { telecallerId: { $exists: false }, assignedTelecaller: { $exists: false } },
+          { assignedTelecaller: '' },
+          { assignedTelecaller: 'Unassigned' },
+        ],
+      }).distinct('_id');
+      conditions.push({ customerId: { $in: unassignedCustIds } });
+    } else {
+      conditions.push({ createdBy: telecallerId });
+    }
+  }
 
   if (status) conditions.push({ status });
   if (date) conditions.push({ date });
+  if (customerId && mongoose.Types.ObjectId.isValid(customerId)) conditions.push({ customerId });
+  if (phone) {
+    const cleanP = String(phone).replace(/\D/g, '').slice(-10);
+    conditions.push({
+      $or: [
+        { phone },
+        ...(cleanP ? [{ phone: new RegExp(cleanP + '$') }] : []),
+      ],
+    });
+  }
 
   const filter = conditions.length > 0 ? { $and: conditions } : {};
 

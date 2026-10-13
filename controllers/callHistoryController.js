@@ -1,4 +1,5 @@
 const asyncHandler = require('express-async-handler');
+const mongoose = require('mongoose');
 const CallHistory = require('../models/CallHistory');
 const Customer = require('../models/Customer');
 
@@ -28,23 +29,38 @@ const createCall = asyncHandler(async (req, res) => {
     customerPhone,
     phone,
     customerName,
+    callType,
+    type,
   } = req.body;
 
   const effectiveDate = date || new Date().toISOString().split('T')[0];
   const effectiveTime = time || new Date().toTimeString().slice(0, 5);
-  const targetPhone = customerPhone || phone;
+  const targetPhone = customerPhone || phone || '';
+  const cleanPhone = String(targetPhone).replace(/\D/g, '').slice(-10);
 
   let customer = null;
-  if (customerId) {
+  if (customerId && mongoose.Types.ObjectId.isValid(customerId)) {
     customer = await Customer.findById(customerId);
-  } else if (targetPhone) {
-    customer = await Customer.findOne({ phone: targetPhone });
+  }
+
+  if (!customer && targetPhone) {
+    customer = await Customer.findOne({
+      $or: [
+        { mobile: targetPhone },
+        { phone: targetPhone },
+        { alternateNumber: targetPhone },
+        ...(cleanPhone ? [{ mobile: new RegExp(cleanPhone + '$') }, { phone: new RegExp(cleanPhone + '$') }] : []),
+      ],
+    });
+
     if (!customer) {
       customer = await Customer.create({
         name: customerName || 'Customer',
+        mobile: targetPhone,
         phone: targetPhone,
         telecallerId: req.user._id,
         assignedTelecaller: req.user.name,
+        status: 'customer',
       });
     }
   }
@@ -67,11 +83,13 @@ const createCall = asyncHandler(async (req, res) => {
   const call = await CallHistory.create({
     customerId: customer._id,
     customerName: customer.name,
+    customerPhone: targetPhone || customer.mobile || customer.phone || '',
+    callType: callType || type || 'Outgoing',
     date: effectiveDate,
     time: effectiveTime,
     duration: duration || '0s',
     status: status || 'connected',
-    remarks,
+    remarks: remarks || '',
     calledBy: req.user._id,
     calledByName: req.user.name,
     recordingUrl: recordingUrl || '',
@@ -89,7 +107,7 @@ const createCall = asyncHandler(async (req, res) => {
 // @route   GET /api/calls?status=&date=&customerId=&page=&limit=
 // @access  Private
 const getCalls = asyncHandler(async (req, res) => {
-  const { status, date, customerId, page = 1, limit = 10 } = req.query;
+  const { status, date, customerId, customerPhone, phone, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
   // Strict isolation: Telecaller only sees their own calls; Admin cannot access callers' calls or recordings!
@@ -97,7 +115,17 @@ const getCalls = asyncHandler(async (req, res) => {
 
   if (status) conditions.push({ status });
   if (date) conditions.push({ date });
-  if (customerId) conditions.push({ customerId });
+  if (customerId && mongoose.Types.ObjectId.isValid(customerId)) conditions.push({ customerId });
+  if (customerPhone || phone) {
+    const p = customerPhone || phone;
+    const cleanP = String(p).replace(/\D/g, '').slice(-10);
+    conditions.push({
+      $or: [
+        { customerPhone: p },
+        ...(cleanP ? [{ customerPhone: new RegExp(cleanP + '$') }] : []),
+      ],
+    });
+  }
 
   const filter = conditions.length > 0 ? { $and: conditions } : {};
 

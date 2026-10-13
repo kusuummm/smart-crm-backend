@@ -46,23 +46,46 @@ const getNotes = asyncHandler(async (req, res) => {
 // @route   POST /api/notes
 // @access  Private
 const createNote = asyncHandler(async (req, res) => {
-  const { customerName, customerPhone, noteFull, noteShort, teamName = 'Main Team', sfNumber = '+91 99999 88888', customerId, callId } = req.body;
+  const customerName = req.body.customerName || req.body.customer || '';
+  let customerPhone = req.body.customerPhone || req.body.phone || req.body.mobile || '';
+  const noteFull = req.body.noteFull || req.body.note || req.body.text || '';
+  const noteShort = req.body.noteShort || '';
+  const teamName = req.body.teamName || 'Main Team';
+  const sfNumber = req.body.sfNumber || '+91 99999 88888';
+  const customerId = req.body.customerId;
+  const callId = req.body.callId;
 
-  if (!customerName || !customerPhone || !noteFull) {
+  if (!noteFull) {
     res.status(400);
-    throw new Error('Customer name, phone, and note content are required');
+    throw new Error('Note content is required');
   }
 
   let matchedCustomerId = customerId;
-  if (!matchedCustomerId) {
-    const cust = await Customer.findOne({ mobile: customerPhone });
-    if (cust) matchedCustomerId = cust._id;
+  let effectiveName = customerName;
+
+  if (customerId && (!customerPhone || !effectiveName)) {
+    const cust = await Customer.findById(customerId);
+    if (cust) {
+      if (!effectiveName) effectiveName = cust.name;
+      if (!customerPhone) customerPhone = cust.mobile || cust.phone || '';
+    }
   }
+
+  if (!customerPhone && effectiveName) {
+    const cust = await Customer.findOne({ name: effectiveName });
+    if (cust) {
+      customerPhone = cust.mobile || cust.phone || '';
+      if (!matchedCustomerId) matchedCustomerId = cust._id;
+    }
+  }
+
+  if (!effectiveName) effectiveName = 'Customer';
+  if (!customerPhone) customerPhone = 'N/A';
 
   const note = await Note.create({
     teamName,
     sfNumber,
-    customerName: customerName.trim(),
+    customerName: effectiveName.trim(),
     customerPhone: customerPhone.trim(),
     customerId: matchedCustomerId,
     callId,

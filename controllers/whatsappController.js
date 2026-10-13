@@ -30,14 +30,15 @@ const sendMessage = asyncHandler(async (req, res) => {
     }
   }
 
-  if (!customer.mobile) {
+  const targetMobile = customer.mobile || customer.phone || customer.alternateNumber;
+  if (!targetMobile) {
     res.status(400);
     throw new Error('This customer has no mobile number on file');
   }
 
   // Meta default template
   const result = await sendWhatsAppTemplate({
-    to: customer.mobile,
+    to: targetMobile,
     templateName: 'hello_world',
     languageCode: 'en_US',
     params: [],
@@ -46,7 +47,7 @@ const sendMessage = asyncHandler(async (req, res) => {
   const log = await WhatsAppLog.create({
     customerId,
     customerName: customer.name,
-    phone: customer.mobile,
+    phone: targetMobile,
     message: 'hello_world template',
     type,
     status: result.success ? 'sent' : 'failed',
@@ -94,8 +95,14 @@ const sendTemplate = asyncHandler(async (req, res) => {
     }
   }
 
+  const targetMobile = customer.mobile || customer.phone || customer.alternateNumber;
+  if (!targetMobile) {
+    res.status(400);
+    throw new Error('This customer has no mobile number on file');
+  }
+
   const result = await sendWhatsAppTemplate({
-    to: customer.mobile,
+    to: targetMobile,
     templateName,
     languageCode,
     params,
@@ -104,7 +111,7 @@ const sendTemplate = asyncHandler(async (req, res) => {
   const log = await WhatsAppLog.create({
     customerId,
     customerName: customer.name,
-    phone: customer.mobile,
+    phone: targetMobile,
     message: displayMessage || `[Template: ${templateName}]`,
     type,
     status: result.success ? 'sent' : 'failed',
@@ -145,9 +152,15 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
     }
   }
 
+  const reminderPhone = customer.mobile || customer.phone || customer.alternateNumber;
+  if (!reminderPhone) {
+    res.status(400);
+    throw new Error('This customer has no mobile number on file');
+  }
+
   const result = await sendWhatsAppTemplate({
-    to: customer.mobile,
-    templateName,
+    to: reminderPhone,
+    templateName: 'hello_world',
     languageCode: 'en_US',
     params: [],
   });
@@ -155,7 +168,7 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
   const log = await WhatsAppLog.create({
     customerId,
     customerName: customer.name,
-    phone: customer.mobile,
+    phone: reminderPhone,
     message: 'hello_world followup',
     type: 'follow-up',
     status: result.success ? 'sent' : 'failed',

@@ -14,7 +14,15 @@ const globalSearch = asyncHandler(async (req, res) => {
 
   const regex = new RegExp(escapeRegex(q.trim()), 'i');
   const searchCondition = {
-    $or: [{ name: regex }, { mobile: regex }, { email: regex }, { company: regex }, { city: regex }],
+    $or: [
+      { name: regex },
+      { mobile: regex },
+      { phone: regex },
+      { alternateNumber: regex },
+      { email: regex },
+      { company: regex },
+      { city: regex },
+    ],
   };
 
   let filter;

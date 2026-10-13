@@ -5,11 +5,11 @@ const meetingSchema = new mongoose.Schema(
     leadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead' },
     customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
     customerName: { type: String, required: true },
-    customerEmail: { type: String, required: true, lowercase: true, trim: true },
+    customerEmail: { type: String, default: '', lowercase: true, trim: true },
     customerPhone: { type: String, default: '' },
     telecallerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     telecallerName: { type: String, required: true },
-    telecallerEmail: { type: String, required: true, lowercase: true, trim: true },
+    telecallerEmail: { type: String, default: '', lowercase: true, trim: true },
     title: { type: String, required: true, default: 'Client Consultation & Demo' },
     date: { type: String, required: true }, // 'YYYY-MM-DD'
     time: { type: String, required: true }, // 'HH:mm'
@@ -20,7 +20,6 @@ const meetingSchema = new mongoose.Schema(
     agenda: { type: String, default: '' },
     status: {
       type: String,
-      enum: ['scheduled', 'completed', 'cancelled', 'rescheduled'],
       default: 'scheduled',
     },
     reminderSent: { type: Boolean, default: false },

@@ -107,12 +107,20 @@ const createLead = asyncHandler(async (req, res) => {
 // @route   GET /api/leads?status=&search=&page=1&limit=10
 // @access  Private
 const getLeads = asyncHandler(async (req, res) => {
-  const { status, search, page = 1, limit = 10 } = req.query;
+  const { status, search, telecallerId, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
   if (req.user.role !== 'admin') {
     // Caller strictly gets only their own assigned leads
     conditions.push({ telecallerId: req.user._id });
+  } else if (telecallerId && telecallerId !== 'all') {
+    if (telecallerId === 'unassigned') {
+      conditions.push({
+        $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
+      });
+    } else {
+      conditions.push({ telecallerId });
+    }
   }
 
   if (status) conditions.push({ status });
@@ -203,6 +211,11 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
   }
   lead.history.push({ status, date: new Date(), remark: remark || '', updatedBy: req.user._id });
   await lead.save();
+
+  // Keep Customer status synchronized with Lead stage
+  if (lead.customerId) {
+    await Customer.findByIdAndUpdate(lead.customerId, { status }).catch(() => {});
+  }
 
   const populatedLead = await Lead.findById(lead._id)
     .populate('customerId', 'name mobile alternateNumber email company city status leadSource');

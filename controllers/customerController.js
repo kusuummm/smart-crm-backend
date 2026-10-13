@@ -124,7 +124,15 @@ const getCustomers = asyncHandler(async (req, res) => {
   if (search) {
     const regex = new RegExp(escapeRegex(search.trim()), 'i');
     conditions.push({
-      $or: [{ name: regex }, { mobile: regex }, { email: regex }, { company: regex }, { city: regex }],
+      $or: [
+        { name: regex },
+        { mobile: regex },
+        { phone: regex },
+        { alternateNumber: regex },
+        { email: regex },
+        { company: regex },
+        { city: regex },
+      ],
     });
   }
 
@@ -206,6 +214,23 @@ const updateCustomer = asyncHandler(async (req, res) => {
     updates.telecallerId = null;
     updates.assignedTelecaller = 'Unassigned';
     await Lead.updateMany({ customerId: customer._id }, { telecallerId: null });
+  }
+
+  if (updates.status) {
+    await Lead.updateMany(
+      { customerId: customer._id },
+      {
+        $set: { status: updates.status },
+        $push: {
+          history: {
+            status: updates.status,
+            date: new Date(),
+            remark: updates.remarks || updates.remark || `Status synced from customer update (${updates.status})`,
+            updatedBy: req.user._id,
+          },
+        },
+      }
+    ).catch(() => {});
   }
 
   Object.assign(customer, updates);

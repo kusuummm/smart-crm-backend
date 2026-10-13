@@ -4,6 +4,7 @@ const customerSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
     mobile: { type: String, required: true, trim: true },
+    phone: { type: String, default: '', trim: true },
     alternateNumber: { type: String, default: '' },
     email: { type: String, default: '', lowercase: true, trim: true },
     company: { type: String, default: '' },
@@ -15,7 +16,7 @@ const customerSchema = new mongoose.Schema(
       trim: true,
     },
     interestedProduct: { type: String, default: '' },
-    status: { type: String, enum: ['active', 'inactive'], default: 'active' },
+    status: { type: String, default: 'active', trim: true },
     assignedTelecaller: { type: String, default: '' }, // denormalized name for quick display
     telecallerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     remarks: { type: String, default: '' },
@@ -23,8 +24,20 @@ const customerSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Support fast deduplication and lookup by mobile
+// Pre-validate hook: keep mobile and phone synchronized
+customerSchema.pre('validate', function (next) {
+  if (!this.mobile && this.phone) {
+    this.mobile = this.phone;
+  }
+  if (!this.phone && this.mobile) {
+    this.phone = this.mobile;
+  }
+  next();
+});
+
+// Support fast deduplication and lookup by mobile and phone
 customerSchema.index({ mobile: 1 });
+customerSchema.index({ phone: 1 });
 // Support global search by name, mobile, email, company, city
 customerSchema.index({ name: 'text', mobile: 'text', email: 'text', company: 'text', city: 'text' });
 

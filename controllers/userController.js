@@ -71,36 +71,78 @@ const getUsers = asyncHandler(async (req, res) => {
     activeSessionMap.set(String(s.user), s.lastSeenAt);
   });
 
-  // Enrich each user with assigned customer and lead counts and real-time online status
-  const enrichedUsers = await Promise.all(
-    users.map(async (u) => {
-      const uObj = u.toObject();
-      const lastSessionSeen = activeSessionMap.get(String(u._id));
-      const hasRecentActivity = u.lastActive && (Date.now() - new Date(u.lastActive).getTime()) < 3 * 60 * 1000;
-      
-      // User is online if active account with active session or recent heartbeat
-      const isOnline = Boolean(
-        u.status === 'active' && (lastSessionSeen || (u.isOnline && hasRecentActivity))
-      );
-      uObj.isOnline = isOnline;
-      uObj.lastActive = lastSessionSeen || u.lastActive || u.updatedAt || u.createdAt;
+  // Pre-calculate customer and lead counts across all callers in 2 efficient aggregation queries
+  const callerUserIds = users.filter((u) => u.role !== 'admin').map((u) => u._id);
+  const callerNames = users.filter((u) => u.role !== 'admin').map((u) => u.name);
 
-      if (u.role !== 'admin') {
-        const [customerCount, leadCount] = await Promise.all([
-          Customer.countDocuments({
-            $or: [{ telecallerId: u._id }, { assignedTelecaller: u.name }],
-          }),
-          Lead.countDocuments({ telecallerId: u._id }),
-        ]);
-        uObj.assignedCustomers = customerCount;
-        uObj.assignedLeads = leadCount;
-      } else {
-        uObj.assignedCustomers = 0;
-        uObj.assignedLeads = 0;
-      }
-      return uObj;
-    })
-  );
+  const [customerAgg, leadAgg] = await Promise.all([
+    Customer.aggregate([
+      {
+        $match: {
+          $or: [
+            { telecallerId: { $in: callerUserIds } },
+            { assignedTelecaller: { $in: callerNames } },
+          ],
+        },
+      },
+      {
+        $project: {
+          matchedKey: {
+            $cond: [
+              { $and: [{ $ne: ['$telecallerId', null] }, { $in: ['$telecallerId', callerUserIds] }] },
+              { $toString: '$telecallerId' },
+              '$assignedTelecaller',
+            ],
+          },
+        },
+      },
+      {
+        $group: {
+          _id: '$matchedKey',
+          count: { $sum: 1 },
+        },
+      },
+    ]),
+    Lead.aggregate([
+      { $match: { telecallerId: { $in: callerUserIds } } },
+      { $group: { _id: '$telecallerId', count: { $sum: 1 } } },
+    ]),
+  ]);
+
+  const customerCountMap = new Map();
+  customerAgg.forEach((item) => {
+    if (item._id) customerCountMap.set(String(item._id), item.count);
+  });
+
+  const leadCountMap = new Map();
+  leadAgg.forEach((item) => {
+    if (item._id) leadCountMap.set(String(item._id), item.count);
+  });
+
+  // Enrich each user with assigned customer and lead counts and real-time online status
+  const enrichedUsers = users.map((u) => {
+    const uObj = u.toObject();
+    const lastSessionSeen = activeSessionMap.get(String(u._id));
+    const hasRecentActivity = u.lastActive && (Date.now() - new Date(u.lastActive).getTime()) < 3 * 60 * 1000;
+    
+    // User is online if active account with active session or recent heartbeat
+    const isOnline = Boolean(
+      u.status === 'active' && (lastSessionSeen || (u.isOnline && hasRecentActivity))
+    );
+    uObj.isOnline = isOnline;
+    uObj.lastActive = lastSessionSeen || u.lastActive || u.updatedAt || u.createdAt;
+
+    if (u.role !== 'admin') {
+      const byId = customerCountMap.get(String(u._id)) || 0;
+      const byName = customerCountMap.get(u.name) || 0;
+      uObj.assignedCustomers = Math.max(byId, byName);
+      uObj.assignedLeads = leadCountMap.get(String(u._id)) || 0;
+    } else {
+      uObj.assignedCustomers = 0;
+      uObj.assignedLeads = 0;
+    }
+    return uObj;
+  });
 
   const pendingCount = await User.countDocuments({
     $or: [{ status: 'pending' }, { isApproved: false }],

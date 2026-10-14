@@ -27,6 +27,7 @@ const walletRoutes = require('./routes/walletRoutes');
 const telephonyRoutes = require('./routes/telephonyRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
+const { generalLimiter } = require('./middleware/rateLimiter');
 
 connectDB();
 
@@ -63,6 +64,9 @@ app.use(cookieParser());
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
+
+// Global API rate limiter (600 requests / minute)
+app.use('/api', generalLimiter);
 
 
 // ================= HEALTH CHECK & NETWORK DIAGNOSTIC =================

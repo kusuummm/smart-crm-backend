@@ -17,14 +17,15 @@ const {
   changePasswordWithOtp,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
+const { authLimiter } = require('../middleware/rateLimiter');
 
-// Public Authentication
-router.post('/login', login);
-router.post('/register', register);
-router.post('/register/send-otp', registerSendOtp);
-router.post('/register/verify-otp', registerVerifyOtp);
-router.post('/forgot-password/send-otp', forgotPasswordSendOtp);
-router.post('/forgot-password/verify-reset', forgotPasswordVerifyReset);
+// Public Authentication (Rate limited to guard against brute-force attacks)
+router.post('/login', authLimiter, login);
+router.post('/register', authLimiter, register);
+router.post('/register/send-otp', authLimiter, registerSendOtp);
+router.post('/register/verify-otp', authLimiter, registerVerifyOtp);
+router.post('/forgot-password/send-otp', authLimiter, forgotPasswordSendOtp);
+router.post('/forgot-password/verify-reset', authLimiter, forgotPasswordVerifyReset);
 
 // Private User Account & Session Management
 router.get('/me', protect, getMe);

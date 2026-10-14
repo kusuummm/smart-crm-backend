@@ -36,4 +36,10 @@ const callHistorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+callHistorySchema.index({ customerId: 1 });
+callHistorySchema.index({ calledBy: 1, date: -1 });
+callHistorySchema.index({ date: -1 });
+callHistorySchema.index({ status: 1 });
+callHistorySchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('CallHistory', callHistorySchema);

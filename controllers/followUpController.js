@@ -172,7 +172,8 @@ const getFollowUps = asyncHandler(async (req, res) => {
       .populate('customerId', 'name mobile phone email company city')
       .sort({ date: 1, time: 1 })
       .skip((pageNum - 1) * limitNum)
-      .limit(limitNum),
+      .limit(limitNum)
+      .lean(),
     FollowUp.countDocuments(filter),
   ]);
 
@@ -228,7 +229,7 @@ const getTodayFollowUps = asyncHandler(async (req, res) => {
 
   const filter = { $and: conditions };
 
-  const followUps = await FollowUp.find(filter).sort({ time: 1 });
+  const followUps = await FollowUp.find(filter).sort({ time: 1 }).lean();
   res.json({ success: true, count: followUps.length, followUps });
 });
 

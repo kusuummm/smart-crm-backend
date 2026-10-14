@@ -38,6 +38,10 @@ customerSchema.pre('validate', function (next) {
 // Support fast deduplication and lookup by mobile and phone
 customerSchema.index({ mobile: 1 });
 customerSchema.index({ phone: 1 });
+customerSchema.index({ telecallerId: 1, createdAt: -1 });
+customerSchema.index({ assignedTelecaller: 1 });
+customerSchema.index({ status: 1 });
+customerSchema.index({ createdAt: -1 });
 // Support global search by name, mobile, email, company, city
 customerSchema.index({ name: 'text', mobile: 'text', email: 'text', company: 'text', city: 'text' });
 

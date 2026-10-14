@@ -139,7 +139,8 @@ const getLeads = asyncHandler(async (req, res) => {
       .populate('customerId', 'name mobile alternateNumber email company city status leadSource')
       .sort({ createdAt: -1 })
       .skip((pageNum - 1) * limitNum)
-      .limit(limitNum),
+      .limit(limitNum)
+      .lean(),
     Lead.countDocuments(filter),
   ]);
 
@@ -309,7 +310,7 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
       _id: { $in: telecallerIds },
       isApproved: true,
       status: 'active',
-    }).select('_id name email phone');
+    }).select('_id name email phone').lean();
   }
 
   // 1. Sanitize & clean batch records
@@ -381,7 +382,7 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
 
   if (skipDuplicates) {
     const allMobiles = uniqueInBatch.map((r) => r.mobile);
-    const existingCustomers = await Customer.find({ mobile: { $in: allMobiles } }).select('mobile');
+    const existingCustomers = await Customer.find({ mobile: { $in: allMobiles } }).select('mobile').lean();
     const existingMobileSet = new Set(existingCustomers.map((c) => c.mobile));
 
     rowsToInsert = uniqueInBatch.filter((r) => {

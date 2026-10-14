@@ -146,7 +146,8 @@ const getCustomers = asyncHandler(async (req, res) => {
     Customer.find(filter)
       .sort(sort)
       .skip((pageNum - 1) * limitNum)
-      .limit(limitNum),
+      .limit(limitNum)
+      .lean(),
     Customer.countDocuments(filter),
   ]);
 
@@ -371,7 +372,7 @@ const bulkDeleteCustomers = asyncHandler(async (req, res) => {
     ];
   }
 
-  const matchingCustomers = await Customer.find(deleteFilter).select('_id');
+  const matchingCustomers = await Customer.find(deleteFilter).select('_id').lean();
   const matchingIds = matchingCustomers.map((c) => c._id);
 
   if (matchingIds.length === 0) {

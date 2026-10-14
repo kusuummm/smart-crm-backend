@@ -58,13 +58,14 @@ const getUsers = asyncHandler(async (req, res) => {
     filter.$or = [{ status: 'pending' }, { isApproved: false }];
   }
 
-  const users = await User.find(filter).sort({ createdAt: -1 });
-
-  // Look up recent active sessions within the last 3 minutes
+  // Look up users and recent active sessions within the last 3 minutes in parallel
   const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000);
-  const activeSessions = await Session.find({
-    lastSeenAt: { $gte: threeMinutesAgo },
-  }).select('user lastSeenAt');
+  const [users, activeSessions] = await Promise.all([
+    User.find(filter).sort({ createdAt: -1 }).lean(),
+    Session.find({
+      lastSeenAt: { $gte: threeMinutesAgo },
+    }).select('user lastSeenAt').lean(),
+  ]);
 
   const activeSessionMap = new Map();
   activeSessions.forEach((s) => {
@@ -121,7 +122,7 @@ const getUsers = asyncHandler(async (req, res) => {
 
   // Enrich each user with assigned customer and lead counts and real-time online status
   const enrichedUsers = users.map((u) => {
-    const uObj = u.toObject();
+    const uObj = u.toObject ? u.toObject() : { ...u };
     const lastSessionSeen = activeSessionMap.get(String(u._id));
     const hasRecentActivity = u.lastActive && (Date.now() - new Date(u.lastActive).getTime()) < 3 * 60 * 1000;
     
@@ -551,21 +552,27 @@ const getCallersProgressReport = asyncHandler(async (req, res) => {
   const startStr = start.toISOString().split('T')[0];
   const endStr = end.toISOString().split('T')[0];
 
-  const telecallers = await User.find({
-    role: { $in: ['telecaller', 'Telecaller'] },
-    isApproved: true,
-  }).select('_id name email avatar phone isOnline');
-
-  const calls = await CallHistory.find({
-    date: { $gte: startStr, $lte: endStr },
-  }).populate('customerId', 'name mobile phone company city');
-
-  const leads = await Lead.find({
-    $or: [
-      { createdAt: { $gte: start, $lte: end } },
-      { 'history.date': { $gte: start, $lte: end } },
-    ],
-  }).populate('customerId', 'name mobile phone company city');
+  const [telecallers, calls, leads] = await Promise.all([
+    User.find({
+      role: { $in: ['telecaller', 'Telecaller'] },
+      isApproved: true,
+    })
+      .select('_id name email avatar phone isOnline')
+      .lean(),
+    CallHistory.find({
+      date: { $gte: startStr, $lte: endStr },
+    })
+      .populate('customerId', 'name mobile phone company city')
+      .lean(),
+    Lead.find({
+      $or: [
+        { createdAt: { $gte: start, $lte: end } },
+        { 'history.date': { $gte: start, $lte: end } },
+      ],
+    })
+      .populate('customerId', 'name mobile phone company city')
+      .lean(),
+  ]);
 
   const daysArray = [];
   const cur = new Date(start);

@@ -21,4 +21,10 @@ const leadSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+leadSchema.index({ customerId: 1 });
+leadSchema.index({ telecallerId: 1, status: 1 });
+leadSchema.index({ status: 1 });
+leadSchema.index({ createdAt: -1 });
+leadSchema.index({ 'history.date': -1 });
+
 module.exports = mongoose.model('Lead', leadSchema);

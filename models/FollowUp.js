@@ -33,4 +33,11 @@ const followUpSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+followUpSchema.index({ customerId: 1 });
+followUpSchema.index({ assignedTo: 1, status: 1 });
+followUpSchema.index({ createdBy: 1, status: 1 });
+followUpSchema.index({ date: 1, time: 1 });
+followUpSchema.index({ status: 1 });
+followUpSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('FollowUp', followUpSchema);

@@ -54,4 +54,8 @@ userSchema.methods.toJSON = function () {
   return obj;
 };
 
+userSchema.index({ role: 1, status: 1 });
+userSchema.index({ isApproved: 1 });
+userSchema.index({ isOnline: 1 });
+
 module.exports = mongoose.model('User', userSchema);

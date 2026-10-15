@@ -285,7 +285,10 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
 
   const {
     batch = [],
-    assignmentStrategy = 'unassigned', // 'round-robin' | 'direct' | 'unassigned'
+    assignmentStrategy = 'rules', // 'rules' | 'round-robin' | 'direct' | 'unassigned'
+    filterRules = [], // [{ field: 'city'|'company'|..., operator: 'equals'|'contains', value: '...', telecallerId: '...' }]
+    fallbackStrategy = 'round-robin', // 'round-robin' | 'direct' | 'unassigned'
+    fallbackLeadId = '',
     telecallerIds = [],
     skipDuplicates = true,
     batchName = '',
@@ -303,15 +306,31 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
     });
   }
 
-  // Load target telecallers if assigned
-  let callers = [];
-  if (['round-robin', 'direct'].includes(assignmentStrategy) && telecallerIds.length > 0) {
-    callers = await User.find({
-      _id: { $in: telecallerIds },
-      isApproved: true,
-      status: 'active',
-    }).select('_id name email phone').lean();
+  // Collect all relevant caller IDs across telecallerIds, filterRules, fallbackLeadId, and rows
+  const collectedCallerIds = new Set();
+  (telecallerIds || []).forEach((id) => id && collectedCallerIds.add(String(id)));
+  (filterRules || []).forEach((r) => r.telecallerId && collectedCallerIds.add(String(r.telecallerId)));
+  if (fallbackLeadId) collectedCallerIds.add(String(fallbackLeadId));
+  batch.forEach((r) => r.telecallerId && collectedCallerIds.add(String(r.telecallerId)));
+
+  // Load target telecallers
+  let callersQuery = {
+    isApproved: true,
+    status: 'active',
+  };
+  if (collectedCallerIds.size > 0) {
+    callersQuery._id = { $in: Array.from(collectedCallerIds) };
+  } else if (assignmentStrategy === 'unassigned') {
+    callersQuery._id = { $in: [] };
   }
+
+  const callers = await User.find(callersQuery).select('_id name email phone').lean();
+  const callersMap = new Map(callers.map((c) => [String(c._id), c]));
+
+  // Active callers list for round-robin
+  const roundRobinCallers = (telecallerIds && telecallerIds.length > 0)
+    ? callers.filter((c) => telecallerIds.includes(String(c._id)))
+    : callers;
 
   // 1. Sanitize & clean batch records
   const validRows = [];
@@ -348,6 +367,8 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
       leadSource: row.leadSource || 'Other',
       interestedProduct: (row.interestedProduct || row.product || '').toString().trim(),
       remarks: (row.remarks || row.notes || '').toString().trim(),
+      telecallerId: row.telecallerId || null,
+      assignedTelecaller: row.assignedTelecaller || '',
     });
   }
 
@@ -410,16 +431,52 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
   // 4. Assign telecallers according to selected strategy
   const callerBreakdown = {};
   const customerDocs = [];
+  let unmatchedFallbackCount = 0;
 
   for (let i = 0; i < rowsToInsert.length; i++) {
     const row = rowsToInsert[i];
     let assignedCaller = null;
 
-    if (assignmentStrategy === 'round-robin' && callers.length > 0) {
-      const idx = (roundRobinOffset + i) % callers.length;
-      assignedCaller = callers[idx];
-    } else if (assignmentStrategy === 'direct' && callers.length > 0) {
+    // A) If already assigned per-row (e.g. from frontend rule processor)
+    if (row.telecallerId && callersMap.has(String(row.telecallerId))) {
+      assignedCaller = callersMap.get(String(row.telecallerId));
+    }
+    // B) Filter rules matching (e.g. city -> lead, company/business -> lead)
+    else if (assignmentStrategy === 'rules' && Array.isArray(filterRules) && filterRules.length > 0) {
+      for (const rule of filterRules) {
+        if (!rule.field || !rule.value || !rule.telecallerId) continue;
+        const fieldVal = (row[rule.field] || '').toString().toLowerCase().trim();
+        const targetVal = rule.value.toString().toLowerCase().trim();
+        const isMatch =
+          rule.operator === 'contains'
+            ? fieldVal.includes(targetVal)
+            : fieldVal === targetVal;
+
+        if (isMatch && callersMap.has(String(rule.telecallerId))) {
+          assignedCaller = callersMap.get(String(rule.telecallerId));
+          break;
+        }
+      }
+
+      // If no rule matched, apply fallback
+      if (!assignedCaller) {
+        if (fallbackStrategy === 'direct' && fallbackLeadId && callersMap.has(String(fallbackLeadId))) {
+          assignedCaller = callersMap.get(String(fallbackLeadId));
+        } else if (fallbackStrategy === 'round-robin' && roundRobinCallers.length > 0) {
+          const idx = (roundRobinOffset + unmatchedFallbackCount) % roundRobinCallers.length;
+          assignedCaller = roundRobinCallers[idx];
+          unmatchedFallbackCount++;
+        }
+      }
+    }
+    // C) Direct single lead strategy
+    else if (assignmentStrategy === 'direct' && callers.length > 0) {
       assignedCaller = callers[0];
+    }
+    // D) Round-robin strategy
+    else if (assignmentStrategy === 'round-robin' && roundRobinCallers.length > 0) {
+      const idx = (roundRobinOffset + i) % roundRobinCallers.length;
+      assignedCaller = roundRobinCallers[idx];
     }
 
     if (assignedCaller) {

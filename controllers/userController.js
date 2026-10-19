@@ -14,7 +14,7 @@ const EmailLog = require('../models/EmailLog');
 // @route   POST /api/users
 // @access  Private/Admin
 const createUser = asyncHandler(async (req, res) => {
-  const { name, email, password, role, phone } = req.body;
+  const { name, email, password, role, phone, status, isApproved } = req.body;
 
   if (!name || !email || !password) {
     res.status(400);
@@ -27,23 +27,54 @@ const createUser = asyncHandler(async (req, res) => {
     throw new Error('A user with this email already exists');
   }
 
-  const isCaller = role !== 'admin';
+  // Normalize role to lower-case
+  let assignedRole = (role || 'member').toLowerCase().trim();
+  if (assignedRole === 'lead' || assignedRole === 'standard user') {
+    assignedRole = 'member';
+  }
+
+  // Security guard: Only an Owner can create another Owner account
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (assignedRole === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can create another Owner account');
+  }
+
+  // Safety: non-owners cannot create admins unless requester is admin or owner
+  if (assignedRole === 'admin' && callerRole !== 'owner' && callerRole !== 'admin') {
+    res.status(403);
+    throw new Error('Only an Administrator or Owner can create Admin accounts');
+  }
+
+  // When created directly by an administrator or owner, default to active and approved
+  const finalStatus = status || 'active';
+  const finalApproved = isApproved !== undefined ? Boolean(isApproved) : true;
+
   const user = await User.create({
-    name,
-    email: email.toLowerCase(),
+    name: name.trim(),
+    email: email.toLowerCase().trim(),
     password,
-    role: isCaller ? 'telecaller' : 'admin',
-    phone: phone || '',
-    status: isCaller ? 'pending' : 'active',
-    isApproved: isCaller ? false : true,
+    role: assignedRole,
+    phone: phone ? phone.trim() : '',
+    status: finalStatus,
+    isApproved: finalApproved,
   });
+
+  let message = 'User account created successfully!';
+  if (assignedRole === 'owner') {
+    message = 'Organization Owner account created successfully!';
+  } else if (assignedRole === 'admin') {
+    message = 'Administrator account created successfully!';
+  } else if (assignedRole === 'manager') {
+    message = 'Team Manager account created successfully! Can supervise team leads and distribute leads.';
+  } else {
+    message = 'Team Member account created successfully!';
+  }
 
   res.status(201).json({
     success: true,
     user,
-    message: isCaller
-      ? 'Telecaller account created successfully! It is pending admin approval before the caller can log in.'
-      : 'Admin account created successfully!',
+    message,
   });
 });
 
@@ -52,7 +83,20 @@ const createUser = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getUsers = asyncHandler(async (req, res) => {
   const filter = {};
-  if (req.query.role) filter.role = req.query.role;
+  if (req.query.role && req.query.role !== 'all') {
+    const qRole = req.query.role.toLowerCase().trim();
+    if (qRole === 'owner') {
+      filter.role = { $in: ['owner', 'Owner'] };
+    } else if (qRole === 'admin') {
+      filter.role = { $in: ['admin', 'Admin'] };
+    } else if (qRole === 'manager') {
+      filter.role = { $in: ['manager', 'Manager'] };
+    } else if (qRole === 'member' || qRole === 'telecaller' || qRole === 'lead') {
+      filter.role = { $in: ['member', 'Member', 'telecaller', 'Telecaller', 'user', 'User', 'lead', 'Lead'] };
+    } else {
+      filter.role = req.query.role;
+    }
+  }
   if (req.query.status) filter.status = req.query.status;
   if (req.query.pending === 'true') {
     filter.$or = [{ status: 'pending' }, { isApproved: false }];
@@ -72,9 +116,13 @@ const getUsers = asyncHandler(async (req, res) => {
     activeSessionMap.set(String(s.user), s.lastSeenAt);
   });
 
-  // Pre-calculate customer and lead counts across all callers in 2 efficient aggregation queries
-  const callerUserIds = users.filter((u) => u.role !== 'admin').map((u) => u._id);
-  const callerNames = users.filter((u) => u.role !== 'admin').map((u) => u.name);
+  // Pre-calculate customer and lead counts across all operational users (members, telecallers, managers)
+  const isOperationalRole = (r) => {
+    const roleLower = (r || '').toLowerCase();
+    return roleLower !== 'admin' && roleLower !== 'owner';
+  };
+  const callerUserIds = users.filter((u) => isOperationalRole(u.role)).map((u) => u._id);
+  const callerNames = users.filter((u) => isOperationalRole(u.role)).map((u) => u.name);
 
   const [customerAgg, leadAgg] = await Promise.all([
     Customer.aggregate([
@@ -133,7 +181,7 @@ const getUsers = asyncHandler(async (req, res) => {
     uObj.isOnline = isOnline;
     uObj.lastActive = lastSessionSeen || u.lastActive || u.updatedAt || u.createdAt;
 
-    if (u.role !== 'admin') {
+    if (isOperationalRole(u.role)) {
       const byId = customerCountMap.get(String(u._id)) || 0;
       const byName = customerCountMap.get(u.name) || 0;
       uObj.assignedCustomers = Math.max(byId, byName);
@@ -181,14 +229,34 @@ const updateUser = asyncHandler(async (req, res) => {
 
   const { name, phone, role } = req.body;
   const oldName = user.name;
+  const callerRole = (req.user?.role || '').toLowerCase();
 
-  if (name) user.name = name;
+  if (name) user.name = name.trim();
   if (phone !== undefined) user.phone = phone;
-  if (role) user.role = role;
+
+  if (role) {
+    let newRole = role.toLowerCase().trim();
+    if (newRole === 'lead' || newRole === 'standard user') newRole = 'member';
+
+    // Hierarchy guards:
+    // Only an Owner can promote a user to Owner
+    if (newRole === 'owner' && callerRole !== 'owner') {
+      res.status(403);
+      throw new Error('Only an organization Owner can promote a user to Owner');
+    }
+
+    // Only an Owner can demote or change an Owner account's role
+    if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+      res.status(403);
+      throw new Error('Only an organization Owner can modify an Owner account');
+    }
+
+    user.role = newRole;
+  }
 
   await user.save();
 
-  // If telecaller name changed, sync denormalized assignedTelecaller in Customer records
+  // If operational user name changed, sync denormalized assignedTelecaller in Customer records
   if (name && name !== oldName) {
     await Customer.updateMany(
       { telecallerId: user._id },
@@ -215,6 +283,12 @@ const resetPassword = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can reset an Owner password');
+  }
+
   user.password = newPassword;
   await user.save();
 
@@ -237,7 +311,13 @@ const toggleUserStatus = asyncHandler(async (req, res) => {
   // Safety: Admin cannot disable their own currently active account
   if (String(req.user._id) === String(user._id) && user.status === 'active') {
     res.status(400);
-    throw new Error('You cannot disable your own admin account');
+    throw new Error('You cannot disable your own active account');
+  }
+
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can change status of an Owner account');
   }
 
   user.status = user.status === 'active' ? 'inactive' : 'active';
@@ -264,7 +344,20 @@ const deleteUser = asyncHandler(async (req, res) => {
   // Safety: Admin cannot delete their own account
   if (String(req.user._id) === String(user._id)) {
     res.status(400);
-    throw new Error('You cannot delete your own admin account');
+    throw new Error('You cannot delete your own account');
+  }
+
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (user.role?.toLowerCase() === 'owner') {
+    if (callerRole !== 'owner') {
+      res.status(403);
+      throw new Error('Only an organization Owner can delete an Owner account');
+    }
+    const ownerCount = await User.countDocuments({ role: { $in: ['owner', 'Owner'] } });
+    if (ownerCount <= 1) {
+      res.status(400);
+      throw new Error('Cannot delete the last remaining Owner account in the organization');
+    }
   }
 
   // Unassign any customers and leads linked to this user so they don't orphan
@@ -554,7 +647,7 @@ const getCallersProgressReport = asyncHandler(async (req, res) => {
 
   const [telecallers, calls, leads] = await Promise.all([
     User.find({
-      role: { $in: ['telecaller', 'Telecaller'] },
+      role: { $in: ['telecaller', 'Telecaller', 'member', 'Member', 'manager', 'Manager', 'lead', 'Lead'] },
       isApproved: true,
     })
       .select('_id name email avatar phone isOnline')
@@ -790,7 +883,9 @@ const getCallersProgressDetail = asyncHandler(async (req, res) => {
     })
       .populate('customerId', 'name mobile phone company city')
       .populate('telecallerId', 'name email avatar'),
-    User.find({ role: { $in: ['telecaller', 'Telecaller'] } }).select('_id name email avatar phone isOnline'),
+    User.find({
+      role: { $in: ['telecaller', 'Telecaller', 'member', 'Member', 'manager', 'Manager', 'lead', 'Lead'] },
+    }).select('_id name email avatar phone isOnline'),
   ]);
 
   const callerStatsMap = {};

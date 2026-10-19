@@ -7,17 +7,27 @@ const CallHistory = require('../models/CallHistory');
 const { escapeRegex } = require('../utils/regexHelper');
 const { sendNewCustomerLeadEmails } = require('../services/followUpEmailService');
 
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
+const isManagerOrAbove = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner' || r === 'manager';
+};
+
 // Strict Data Isolation:
 // - Callers can ONLY see contacts assigned to their account. Callers cannot see other callers' contacts.
-// - Admin CANNOT access contacts assigned to callers! Admin can only see unassigned contacts for distribution.
+// - Admin/Owner CANNOT access contacts assigned to callers! Admin/Owner can only see unassigned contacts for distribution.
 const scopeToRole = (req, filter = {}) => {
-  if (req.user.role !== 'admin') {
+  if (!isAdminOrOwner(req.user)) {
     filter.$or = [
       { telecallerId: req.user._id },
       { assignedTelecaller: req.user.name },
     ];
   } else {
-    // Admin cannot access contacts assigned to callers
+    // Admin/Owner cannot access contacts assigned to callers
     filter.$or = [
       { telecallerId: null },
       { telecallerId: { $exists: false } },
@@ -48,7 +58,7 @@ const createCustomer = asyncHandler(async (req, res) => {
 
   const payload = sanitizeCustomerPayload(req.body);
 
-  if (req.user.role !== 'admin') {
+  if (!isAdminOrOwner(req.user)) {
     payload.telecallerId = req.user._id;
     payload.assignedTelecaller = req.user.name;
   } else if (payload.telecallerId) {
@@ -96,8 +106,8 @@ const getCustomers = asyncHandler(async (req, res) => {
 
   const conditions = [];
 
-  if (req.user.role !== 'admin') {
-    // Telecaller can ONLY access their own assigned contacts
+  if (!isAdminOrOwner(req.user)) {
+    // Telecaller / Member can ONLY access their own assigned contacts
     conditions.push({
       $or: [
         { telecallerId: req.user._id },
@@ -172,7 +182,7 @@ const getCustomerById = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  if (req.user.role === 'admin') {
+  if (isAdminOrOwner(req.user)) {
     const isAssigned = customer.telecallerId || (customer.assignedTelecaller && customer.assignedTelecaller !== 'Unassigned');
     if (isAssigned) {
       res.status(403);
@@ -195,7 +205,7 @@ const getCustomerById = asyncHandler(async (req, res) => {
 // @access  Private
 const updateCustomer = asyncHandler(async (req, res) => {
   let customer;
-  if (req.user.role === 'admin') {
+  if (isAdminOrOwner(req.user)) {
     customer = await Customer.findById(req.params.id);
   } else {
     customer = await Customer.findOne({
@@ -269,11 +279,6 @@ const updateCustomer = asyncHandler(async (req, res) => {
 // @route   DELETE /api/customers/:id
 // @access  Private/Admin/Telecaller
 const deleteCustomer = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.role !== 'telecaller') {
-    res.status(403);
-    throw new Error('Only authorized users can delete customer records');
-  }
-
   const customer = await Customer.findById(req.params.id);
 
   if (!customer) {
@@ -281,8 +286,8 @@ const deleteCustomer = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  // Telecallers cannot delete other telecallers' customers
-  if (req.user.role !== 'admin') {
+  // Non-admins can only delete their own assigned contacts
+  if (!isAdminOrOwner(req.user)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
@@ -302,11 +307,11 @@ const deleteCustomer = asyncHandler(async (req, res) => {
 
 // @desc    Bulk assign multiple customers
 // @route   POST /api/customers/bulk-assign
-// @access  Private/Admin
+// @access  Private/Admin/Manager
 const bulkAssignCustomers = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  if (!isManagerOrAbove(req.user)) {
     res.status(403);
-    throw new Error('Only administrators can bulk assign customers');
+    throw new Error('Only administrators and managers can bulk assign customers');
   }
 
   const { customerIds, telecallerId } = req.body;
@@ -323,7 +328,7 @@ const bulkAssignCustomers = asyncHandler(async (req, res) => {
     const targetUser = await User.findById(telecallerId);
     if (!targetUser) {
       res.status(404);
-      throw new Error('Target telecaller user not found');
+      throw new Error('Target lead agent user not found');
     }
     assignedTelecaller = targetUser.name;
     targetUserId = targetUser._id;
@@ -352,11 +357,6 @@ const bulkAssignCustomers = asyncHandler(async (req, res) => {
 // @route   POST /api/customers/bulk-delete
 // @access  Private/Admin/Telecaller
 const bulkDeleteCustomers = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin' && req.user.role !== 'telecaller') {
-    res.status(403);
-    throw new Error('Only authorized users can bulk delete customers');
-  }
-
   const { customerIds } = req.body;
 
   if (!customerIds || !Array.isArray(customerIds) || customerIds.length === 0) {
@@ -365,7 +365,7 @@ const bulkDeleteCustomers = asyncHandler(async (req, res) => {
   }
 
   const deleteFilter = { _id: { $in: customerIds } };
-  if (req.user.role !== 'admin') {
+  if (!isAdminOrOwner(req.user)) {
     deleteFilter.$or = [
       { telecallerId: req.user._id },
       { assignedTelecaller: req.user.name },

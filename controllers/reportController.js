@@ -164,7 +164,9 @@ const leadConversionReport = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const telecallerPerformanceReport = asyncHandler(async (req, res) => {
   const format = req.query.format || 'json';
-  const telecallers = await User.find({ role: 'telecaller' });
+  const telecallers = await User.find({
+    role: { $in: ['telecaller', 'Telecaller', 'member', 'Member', 'manager', 'Manager', 'lead', 'Lead'] },
+  });
 
   const rows = await Promise.all(
     telecallers.map(async (tc) => {

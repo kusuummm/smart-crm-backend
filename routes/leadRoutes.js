@@ -5,7 +5,7 @@ const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
 
-router.post('/bulk-import', authorize('admin'), bulkImportLeads);
+router.post('/bulk-import', authorize('manager'), bulkImportLeads);
 router.route('/').post(authorize('admin', 'telecaller', 'manager'), createLead).get(getLeads);
 router.route('/:id').get(getLeadById).delete(authorize('admin'), deleteLead);
 router.put('/:id/status', updateLeadStatus);

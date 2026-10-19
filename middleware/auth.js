@@ -57,10 +57,35 @@ const protect = asyncHandler(async (req, res, next) => {
   }
 });
 
-// Restricts a route to specific roles, e.g. authorize('admin')
+// Role hierarchy definitions
+const ROLE_HIERARCHY = {
+  owner: 4,
+  admin: 3,
+  manager: 2,
+  member: 1,
+  telecaller: 1,
+  user: 1,
+};
+
+// Restricts a route to specific roles or higher in hierarchy, e.g. authorize('admin')
 const authorize = (...roles) => {
+  const normalizedAllowed = roles.map((r) => (r || '').toLowerCase());
+  const minRequiredLevel = Math.min(...normalizedAllowed.map((r) => ROLE_HIERARCHY[r] || 1));
+
   return (req, res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
+      res.status(401);
+      throw new Error('Not authorized, no user found');
+    }
+
+    const userRole = (req.user.role || '').toLowerCase();
+    const userLevel = ROLE_HIERARCHY[userRole] || 1;
+
+    // Check exact match or hierarchy level
+    const isDirectMatch = normalizedAllowed.includes(userRole);
+    const hasHierarchyAccess = userLevel >= minRequiredLevel;
+
+    if (!isDirectMatch && !hasHierarchyAccess) {
       res.status(403);
       throw new Error(`Role '${req.user?.role}' is not allowed to access this resource`);
     }
@@ -68,4 +93,5 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize };
+module.exports = { protect, authorize, ROLE_HIERARCHY };
+

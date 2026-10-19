@@ -14,7 +14,7 @@ const { protect, authorize } = require('../middleware/auth');
 router.use(protect);
 
 // Bulk operations - MUST come before /:id parameter route
-router.post('/bulk-assign', authorize('admin'), bulkAssignCustomers);
+router.post('/bulk-assign', authorize('manager'), bulkAssignCustomers);
 router.post('/bulk-delete', bulkDeleteCustomers);
 
 router.route('/').post(createCustomer).get(getCustomers);

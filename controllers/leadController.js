@@ -5,6 +5,16 @@ const User = require('../models/User');
 const { escapeRegex } = require('../utils/regexHelper');
 const { sendFollowUpStatusChangeEmails, sendNewCustomerLeadEmails } = require('../services/followUpEmailService');
 
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
+const isManagerOrAbove = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner' || r === 'manager';
+};
+
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
     $or: [{ telecallerId: user._id }, { assignedTelecaller: user.name }],
@@ -29,7 +39,7 @@ const createLead = asyncHandler(async (req, res) => {
   }
 
   let assignedTelecallerId;
-  if (req.user.role === 'telecaller') {
+  if (!isManagerOrAbove(req.user)) {
     assignedTelecallerId = req.user._id;
   } else {
     assignedTelecallerId = telecallerId || customer.telecallerId || null;
@@ -110,7 +120,7 @@ const getLeads = asyncHandler(async (req, res) => {
   const { status, search, telecallerId, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (req.user.role !== 'admin') {
+  if (!isManagerOrAbove(req.user)) {
     // Caller strictly gets only their own assigned leads
     conditions.push({ telecallerId: req.user._id });
   } else if (telecallerId && telecallerId !== 'all') {
@@ -166,7 +176,7 @@ const getLeadById = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (req.user.role !== 'admin') {
+  if (!isManagerOrAbove(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId?._id || lead.customerId));
@@ -196,7 +206,7 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (req.user.role !== 'admin') {
+  if (!isManagerOrAbove(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId));
@@ -258,9 +268,9 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
 // @route   DELETE /api/leads/:id
 // @access  Private/Admin
 const deleteLead = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  if (!isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Only administrators can delete leads');
+    throw new Error('Only administrators and owners can delete leads');
   }
 
   const lead = await Lead.findById(req.params.id);
@@ -274,13 +284,13 @@ const deleteLead = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Lead removed' });
 });
 
-// @desc    High-performance chunked bulk import & assignment of leads from Excel/CSV (ADMIN ONLY)
+// @desc    High-performance chunked bulk import & assignment of leads from Excel/CSV (ADMIN & MANAGER)
 // @route   POST /api/leads/bulk-import
-// @access  Private/Admin
+// @access  Private/Admin/Manager
 const bulkImportLeads = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  if (!isManagerOrAbove(req.user)) {
     res.status(403);
-    throw new Error('Only administrators can import and assign leads');
+    throw new Error('Only administrators and managers can import and assign leads');
   }
 
   const {

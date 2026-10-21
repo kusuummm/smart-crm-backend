@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const Meeting = require('../models/Meeting');
 const EmailLog = require('../models/EmailLog');
 const sendEmail = require('../utils/sendEmail');
@@ -126,6 +127,9 @@ const getCallerReminderHtml = (meeting) => {
 // Check for upcoming meetings starting within the next 60 minutes and send reminder emails
 const checkAndSendMeetingReminders = async () => {
   try {
+    if (mongoose.connection.readyState !== 1) {
+      return;
+    }
     const now = new Date();
     // Look ahead 60 minutes + 5 minute buffer
     const windowStart = new Date(now.getTime() - 15 * 60 * 1000); // 15 mins ago to avoid missing edge cases

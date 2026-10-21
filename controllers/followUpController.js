@@ -15,7 +15,25 @@ const getTelecallerCustomerIds = async (user) => {
 // @route   POST /api/followups
 // @access  Private
 const createFollowUp = asyncHandler(async (req, res) => {
-  const { customerId, date, time, remarks, nextFollowUp, assignedTo, customerName, phone, type } = req.body;
+  let { customerId, date, time, remarks, notes, scheduledDate, nextFollowUp, assignedTo, customerName, phone, type } = req.body;
+
+  if (!date && scheduledDate) {
+    const d = new Date(scheduledDate);
+    if (!isNaN(d.getTime())) {
+      date = d.toISOString().split('T')[0];
+      if (!time) {
+        time = d.toTimeString().slice(0, 5);
+      }
+    }
+  }
+
+  if (date && !time) {
+    time = '10:00';
+  }
+
+  if (!remarks && notes) {
+    remarks = notes;
+  }
 
   if (!date || !time) {
     res.status(400);

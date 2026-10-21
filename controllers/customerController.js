@@ -41,6 +41,7 @@ const scopeToRole = (req, filter = {}) => {
 
 const sanitizeCustomerPayload = (payload) => {
   const cleaned = { ...payload };
+  if (!cleaned.mobile && cleaned.phone) cleaned.mobile = cleaned.phone;
   if (cleaned.telecallerId === '') delete cleaned.telecallerId;
   if (cleaned.leadSource === '') delete cleaned.leadSource;
   return cleaned;
@@ -50,13 +51,14 @@ const sanitizeCustomerPayload = (payload) => {
 // @route   POST /api/customers
 // @access  Private
 const createCustomer = asyncHandler(async (req, res) => {
-  const { name, mobile } = req.body;
+  const name = req.body.name;
+  const mobile = req.body.mobile || req.body.phone;
   if (!name || !mobile) {
     res.status(400);
     throw new Error('Customer name and mobile number are required');
   }
 
-  const payload = sanitizeCustomerPayload(req.body);
+  const payload = sanitizeCustomerPayload({ ...req.body, mobile });
 
   if (!isAdminOrOwner(req.user)) {
     payload.telecallerId = req.user._id;

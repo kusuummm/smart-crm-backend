@@ -48,7 +48,7 @@ const getNotes = asyncHandler(async (req, res) => {
 const createNote = asyncHandler(async (req, res) => {
   const customerName = req.body.customerName || req.body.customer || '';
   let customerPhone = req.body.customerPhone || req.body.phone || req.body.mobile || '';
-  const noteFull = req.body.noteFull || req.body.note || req.body.text || '';
+  const noteFull = req.body.noteFull || req.body.note || req.body.text || req.body.content || '';
   const noteShort = req.body.noteShort || '';
   const teamName = req.body.teamName || 'Main Team';
   const sfNumber = req.body.sfNumber || '+91 99999 88888';

@@ -1,13 +1,22 @@
 const axios = require('axios');
 
-const BASE_URL = () =>
-  `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || 'v20.0'}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
+const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
+
+const BASE_URL = () => {
+  const phoneId = getPhoneId();
+  if (process.env.WHATSAPP_API_URL) {
+    return `${process.env.WHATSAPP_API_URL.replace(/\/+$/, '')}/${phoneId}/messages`;
+  }
+  return `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || 'v23.0'}/${phoneId}/messages`;
+};
 
 // Sends a free-form text message. Only works within Meta's 24-hour customer
 // service window (i.e. after the customer has messaged you recently).
 // For the first outbound message to a customer, use sendWhatsAppTemplate instead.
 const sendWhatsAppText = async ({ to, message }) => {
-  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) {
+  const token = getToken();
+  if (!token || !getPhoneId()) {
     return { success: false, error: 'WhatsApp credentials are not configured in .env' };
   }
 
@@ -20,7 +29,7 @@ const sendWhatsAppText = async ({ to, message }) => {
         type: 'text',
         text: { body: message },
       },
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
     return { success: true, providerMessageId: data.messages?.[0]?.id };
   } catch (error) {
@@ -33,7 +42,8 @@ const sendWhatsAppText = async ({ to, message }) => {
 // `templateName` must match a template already approved in Meta Business Manager.
 // `params` is an array of strings filled into the template's {{1}}, {{2}}, etc.
 const sendWhatsAppTemplate = async ({ to, templateName, languageCode = 'en_US', params = [] }) => {
-  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) {
+  const token = getToken();
+  if (!token || !getPhoneId()) {
     return { success: false, error: 'WhatsApp credentials are not configured in .env' };
   }
 
@@ -52,7 +62,7 @@ const sendWhatsAppTemplate = async ({ to, templateName, languageCode = 'en_US', 
             : [],
         },
       },
-      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
+      { headers: { Authorization: `Bearer ${token}` } }
     );
     return { success: true, providerMessageId: data.messages?.[0]?.id };
   } catch (error) {

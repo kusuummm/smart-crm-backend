@@ -461,7 +461,9 @@ const getSystemOverview = asyncHandler(async (req, res) => {
   ]);
 
   const smtpUser = process.env.SMTP_USER || 'info@paymanent.com';
-  const hasWhatsApp = Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+  const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
+  const whatsappToken = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
+  const hasWhatsApp = Boolean(whatsappToken && whatsappPhoneId);
   const dbConnected = mongoose.connection.readyState === 1;
 
   res.json({
@@ -486,7 +488,7 @@ const getSystemOverview = asyncHandler(async (req, res) => {
         },
         whatsapp: {
           status: hasWhatsApp ? 'configured' : 'simulator_mode',
-          phoneId: process.env.WHATSAPP_PHONE_NUMBER_ID ? 'Configured' : 'Demo/Mock Mode',
+          phoneId: whatsappPhoneId ? 'Configured' : 'Demo/Mock Mode',
         },
         database: {
           status: dbConnected ? 'connected' : 'disconnected',

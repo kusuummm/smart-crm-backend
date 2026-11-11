@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const Customer = require('../models/Customer');
@@ -225,7 +226,7 @@ const getLogs = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Webhook Verify
+// @desc    Webhook Verify (GET /api/whatsapp/webhook)
 // @route   GET /api/whatsapp/webhook
 // @access  Public
 const verifyWebhook = (req, res) => {
@@ -233,28 +234,77 @@ const verifyWebhook = (req, res) => {
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
+  const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+  if (mode === 'subscribe' && token && token === expectedToken) {
     return res.status(200).send(challenge);
   }
 
   res.sendStatus(403);
 };
 
-// @desc    Receive Meta Updates
+// @desc    Receive Meta Updates (POST /api/whatsapp/webhook)
 // @route   POST /api/whatsapp/webhook
 // @access  Public
-const receiveWebhook = asyncHandler(async (req, res) => {
-  const statusUpdate = req.body?.entry?.[0]?.changes?.[0]?.value?.statuses?.[0];
+const receiveWebhook = (req, res) => {
+  // 1. Verify X-Hub-Signature-256 against WHATSAPP_APP_SECRET if configured
+  const appSecret = process.env.WHATSAPP_APP_SECRET;
+  const signature = req.headers['x-hub-signature-256'];
 
-  if (statusUpdate) {
-    await WhatsAppLog.findOneAndUpdate(
-      { providerMessageId: statusUpdate.id },
-      { status: statusUpdate.status }
-    );
+  if (appSecret && signature) {
+    try {
+      const hmac = crypto.createHmac('sha256', appSecret);
+      const payload = req.rawBody ? req.rawBody : Buffer.from(JSON.stringify(req.body));
+      const digest = `sha256=${hmac.update(payload).digest('hex')}`;
+
+      const sigBuf = Buffer.from(signature);
+      const digBuf = Buffer.from(digest);
+      if (sigBuf.length !== digBuf.length || !crypto.timingSafeEqual(sigBuf, digBuf)) {
+        console.warn('WhatsApp webhook signature verification failed.');
+        return res.sendStatus(401);
+      }
+    } catch (err) {
+      console.warn('Webhook signature verification error:', err.message);
+      return res.sendStatus(401);
+    }
   }
 
+  // 2. Return 200 immediately to Meta (Meta retries on timeout)
   res.sendStatus(200);
-});
+
+  // 3. Process status updates and template events asynchronously
+  setImmediate(async () => {
+    try {
+      const entries = req.body?.entry || [];
+      for (const entry of entries) {
+        const changes = entry.changes || [];
+        for (const change of changes) {
+          const value = change?.value;
+          if (!value) continue;
+
+          // Delivery/read status updates
+          const statuses = value.statuses || [];
+          for (const statusUpdate of statuses) {
+            if (statusUpdate.id) {
+              await WhatsAppLog.findOneAndUpdate(
+                { providerMessageId: statusUpdate.id },
+                { status: statusUpdate.status }
+              );
+            }
+          }
+
+          // Message template status updates (e.g. APPROVED, REJECTED)
+          if (change.field === 'message_template_status_update') {
+            console.log(
+              `[Meta WhatsApp] Template update for ${value.message_template_name}: ${value.event}`
+            );
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Error processing WhatsApp webhook asynchronously:', err);
+    }
+  });
+};
 
 module.exports = {
   sendMessage,

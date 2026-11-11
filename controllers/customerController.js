@@ -4,6 +4,10 @@ const User = require('../models/User');
 const Lead = require('../models/Lead');
 const FollowUp = require('../models/FollowUp');
 const CallHistory = require('../models/CallHistory');
+const WhatsAppLog = require('../models/WhatsAppLog');
+const EmailLog = require('../models/EmailLog');
+const Note = require('../models/Note');
+const Application = require('../models/Application');
 const { escapeRegex } = require('../utils/regexHelper');
 const { sendNewCustomerLeadEmails } = require('../services/followUpEmailService');
 
@@ -399,6 +403,147 @@ const bulkDeleteCustomers = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get complete unified communication history for a customer
+// @route   GET /api/customers/:id/communication-history
+// @access  Private
+const getCustomerCommunicationHistory = asyncHandler(async (req, res) => {
+  const customer = await Customer.findById(req.params.id);
+  if (!customer) {
+    res.status(404);
+    throw new Error('Customer not found');
+  }
+
+  const phoneNumbers = [customer.mobile, customer.phone, customer.alternateNumber].filter(Boolean);
+  const emails = [customer.email].filter(Boolean);
+
+  const [calls, whatsappLogs, emailLogs, notes, applications] = await Promise.all([
+    CallHistory.find({
+      $or: [{ customerId: customer._id }, { contactNumber: { $in: phoneNumbers } }],
+    }).sort({ createdAt: -1 }),
+    WhatsAppLog.find({
+      $or: [{ customerId: customer._id }, { phone: { $in: phoneNumbers } }],
+    }).sort({ createdAt: -1 }),
+    EmailLog.find({
+      $or: [{ customerId: customer._id }, { to: { $in: emails } }],
+    }).sort({ createdAt: -1 }),
+    Note.find({ customerId: customer._id }).sort({ createdAt: -1 }),
+    Application.find({ customerId: customer._id }).sort({ createdAt: -1 }),
+  ]);
+
+  const timeline = [];
+
+  calls.forEach((c) => {
+    timeline.push({
+      id: c._id,
+      type: 'call',
+      title: `Call (${c.callType || 'Outbound'})`,
+      timestamp: c.createdAt,
+      status: c.status,
+      details: {
+        duration: c.duration,
+        caller: c.callerName || c.callerNumber,
+        notes: c.notes,
+        recordingUrl: c.recordingUrl,
+      },
+      actor: c.callerName || 'Agent',
+    });
+  });
+
+  whatsappLogs.forEach((w) => {
+    timeline.push({
+      id: w._id,
+      type: 'whatsapp',
+      title: `WhatsApp Message (${w.type || 'Template'})`,
+      timestamp: w.createdAt,
+      status: w.status,
+      details: {
+        message: w.message,
+        phone: w.phone,
+        providerMessageId: w.providerMessageId,
+      },
+      actor: w.sentByName || 'System',
+    });
+  });
+
+  emailLogs.forEach((e) => {
+    timeline.push({
+      id: e._id,
+      type: 'email',
+      title: `Email: ${e.subject || 'Follow-up Email'}`,
+      timestamp: e.createdAt,
+      status: e.status,
+      details: {
+        to: e.to,
+        subject: e.subject,
+        preview: e.bodySnippet,
+      },
+      actor: e.sentByName || 'System',
+    });
+  });
+
+  notes.forEach((n) => {
+    timeline.push({
+      id: n._id,
+      type: 'note',
+      title: `Internal Note (${n.tag || 'General'})`,
+      timestamp: n.createdAt,
+      status: 'saved',
+      details: {
+        content: n.content,
+      },
+      actor: n.createdByName || 'Agent',
+    });
+  });
+
+  applications.forEach((a) => {
+    timeline.push({
+      id: a._id,
+      type: 'application',
+      title: `Application ${a.applicationNumber} (${a.applicationType})`,
+      timestamp: a.createdAt,
+      status: a.status,
+      details: {
+        applicationNumber: a.applicationNumber,
+        paymentStatus: a.paymentStatus,
+        paymentAmount: a.paymentAmount,
+        documentCount: a.documents?.length || 0,
+        certificate: a.finalCertificate?.certificateNumber || null,
+      },
+      actor: a.assignedToName || 'Admin',
+    });
+
+    (a.history || []).forEach((h, idx) => {
+      timeline.push({
+        id: `${a._id}-h-${idx}`,
+        type: 'application_event',
+        title: `${a.applicationNumber}: ${h.action}`,
+        timestamp: h.date,
+        status: a.status,
+        details: {
+          notes: h.notes,
+        },
+        actor: h.performedByName || 'Admin',
+      });
+    });
+  });
+
+  timeline.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+  res.json({
+    success: true,
+    customer,
+    timeline,
+    counts: {
+      calls: calls.length,
+      whatsapp: whatsappLogs.length,
+      emails: emailLogs.length,
+      notes: notes.length,
+      applications: applications.length,
+      total: timeline.length,
+    },
+  });
+});
+
 module.exports = {
   createCustomer,
   getCustomers,
@@ -407,4 +552,5 @@ module.exports = {
   deleteCustomer,
   bulkAssignCustomers,
   bulkDeleteCustomers,
+  getCustomerCommunicationHistory,
 };

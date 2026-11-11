@@ -73,7 +73,7 @@ const createBroadcast = asyncHandler(async (req, res) => {
   const readRate = deliveredCount > 0 ? `${Math.round((readCount / deliveredCount) * 100)}%` : '0%';
 
   // If real WhatsApp channel and configured, attempt dispatching hello_world or custom template
-  if (channel === 'whatsapp' && process.env.WHATSAPP_TOKEN) {
+  if (channel === 'whatsapp' && (process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN)) {
     for (const rec of recipientList.slice(0, 3)) {
       if (rec.phone) {
         sendWhatsAppTemplate({

@@ -5,6 +5,7 @@ const cors = require('cors');
 const compression = require('compression');
 const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
+const path = require('path');
 
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
@@ -27,6 +28,7 @@ const noteRoutes = require('./routes/noteRoutes');
 const walletRoutes = require('./routes/walletRoutes');
 const telephonyRoutes = require('./routes/telephonyRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
+const applicationRoutes = require('./routes/applicationRoutes');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 const { generalLimiter } = require('./middleware/rateLimiter');
 
@@ -59,7 +61,13 @@ app.use(
   })
 );
 
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
@@ -176,6 +184,12 @@ app.use(['/api/telephony', '/telephony'], telephonyRoutes);
 
 // Meetings & Auto 1-Hour Reminder
 app.use(['/api/meetings', '/meetings'], meetingRoutes);
+
+// Applications & Documents Management
+app.use(['/api/applications', '/applications'], applicationRoutes);
+
+// Static uploads directory for documents & certificates
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 
 // ================= ERROR HANDLING =================

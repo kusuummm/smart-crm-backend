@@ -1,3 +1,4 @@
+const emailNotificationService = require('../services/emailNotificationService');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const Session = require('../models/Session');
@@ -249,10 +250,10 @@ const registerSendOtp = asyncHandler(async (req, res) => {
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   });
 
-  const mailResult = await sendOtpEmail({
-    to: normalizedEmail,
+  const mailResult = await emailNotificationService.sendVerificationEmail({
+    recipientEmail: normalizedEmail,
+    recipientName: name,
     otp,
-    purpose: 'register',
   });
 
   if (!mailResult.success) {
@@ -414,10 +415,10 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   });
 
-  const mailResult = await sendOtpEmail({
-    to: normalizedEmail,
+  const mailResult = await emailNotificationService.sendPasswordResetEmail({
+    recipientEmail: normalizedEmail,
+    recipientName: user.name,
     otp,
-    purpose: 'forgot_password',
   });
 
   if (!mailResult.success) {

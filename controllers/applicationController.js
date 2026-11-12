@@ -1,3 +1,4 @@
+const emailNotificationService = require('../services/emailNotificationService');
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const fs = require('fs');
@@ -197,6 +198,30 @@ const createApplication = asyncHandler(async (req, res) => {
     ],
   });
 
+  // Automatic Email: Application Submitted
+  emailNotificationService.sendApplicationSubmittedEmail({
+    customerId: customer._id,
+    customerName: customer.name,
+    customerEmail: customer.email,
+    applicationNumber: application.applicationNumber,
+    applicationType: application.applicationType,
+    feeAmount: application.paymentAmount,
+    paymentStatus: application.paymentStatus,
+    remarks,
+  }).catch((err) => console.warn('[Email Error] Application Submitted:', err.message));
+
+  if (application.paymentStatus === 'completed') {
+    emailNotificationService.sendPaymentConfirmationEmail({
+      customerId: customer._id,
+      customerName: customer.name,
+      customerEmail: customer.email,
+      applicationNumber: application.applicationNumber,
+      paymentAmount: application.paymentAmount,
+      paymentReference: application.paymentReference,
+      paymentDate: new Date(),
+    }).catch((err) => console.warn('[Email Error] Payment Confirmation:', err.message));
+  }
+
   res.status(201).json({
     success: true,
     message: 'Application created successfully',
@@ -247,6 +272,27 @@ const updateStatus = asyncHandler(async (req, res) => {
 
   await application.save();
 
+  // Automatic Email: Application Status Update
+  emailNotificationService.sendApplicationStatusUpdateEmail({
+    customerId: application.customerId,
+    customerName: application.customerName,
+    customerEmail: application.customerEmail,
+    applicationNumber: application.applicationNumber,
+    oldStatus: prevStatus,
+    newStatus: status,
+    remarks: rejectionReason || resubmissionNotes || remarks,
+  }).catch((err) => console.warn('[Email Error] Status Update:', err.message));
+
+  if (status === 'pending_documents' || status === 'resubmission_required') {
+    emailNotificationService.sendDocumentsPendingEmail({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerEmail: application.customerEmail,
+      applicationNumber: application.applicationNumber,
+      resubmissionNotes: rejectionReason || resubmissionNotes,
+    }).catch((err) => console.warn('[Email Error] Documents Pending:', err.message));
+  }
+
   res.json({
     success: true,
     message: `Application status updated to ${status}`,
@@ -284,6 +330,18 @@ const updatePayment = asyncHandler(async (req, res) => {
   });
 
   await application.save();
+
+  if (application.paymentStatus === 'completed') {
+    emailNotificationService.sendPaymentConfirmationEmail({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerEmail: application.customerEmail,
+      applicationNumber: application.applicationNumber,
+      paymentAmount: application.paymentAmount,
+      paymentReference: application.paymentReference,
+      paymentDate: application.paymentDate || new Date(),
+    }).catch((err) => console.warn('[Email Error] Payment Confirmation:', err.message));
+  }
 
   res.json({
     success: true,
@@ -394,6 +452,25 @@ const updateDocumentStatus = asyncHandler(async (req, res) => {
 
   await application.save();
 
+  if (status === 'verified') {
+    emailNotificationService.sendDocumentsApprovedEmail({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerEmail: application.customerEmail,
+      applicationNumber: application.applicationNumber,
+      documentName: doc.name,
+    }).catch((err) => console.warn('[Email Error] Documents Approved:', err.message));
+  } else if (status === 'resubmission_required' || status === 'rejected') {
+    emailNotificationService.sendDocumentsPendingEmail({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerEmail: application.customerEmail,
+      applicationNumber: application.applicationNumber,
+      missingDocuments: [doc.name],
+      resubmissionNotes: remarks,
+    }).catch((err) => console.warn('[Email Error] Document Resubmit:', err.message));
+  }
+
   res.json({
     success: true,
     message: `Document status marked as ${status}`,
@@ -501,6 +578,17 @@ const uploadCertificate = asyncHandler(async (req, res) => {
   });
 
   await application.save();
+
+  // Automatic Email: Registration Completed & Final Certificate Ready
+  emailNotificationService.sendRegistrationCompletedEmail({
+    customerId: application.customerId,
+    customerName: application.customerName,
+    customerEmail: application.customerEmail,
+    applicationNumber: application.applicationNumber,
+    certificateNumber: certNum,
+    certificateTitle: title,
+    downloadUrl: application.finalCertificate.fileUrl,
+  }).catch((err) => console.warn('[Email Error] Registration Completed:', err.message));
 
   res.status(201).json({
     success: true,

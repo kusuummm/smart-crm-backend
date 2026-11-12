@@ -9,7 +9,8 @@
     "dev": "nodemon server.js",
     "seed": "node utils/seed.js",
     "test:email": "node utils/testEmail.js",
-    "test:apis": "node utils/testAllApis.js"
+    "test:apis": "node utils/testAllApis.js",
+    "test:emails": "node utils/testAllEmails.js"
   },
   "dependencies": {
     "axios": "^1.7.2",

@@ -1,3 +1,4 @@
+const emailNotificationService = require('../services/emailNotificationService');
 const asyncHandler = require('express-async-handler');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
@@ -424,7 +425,7 @@ const getCustomerCommunicationHistory = asyncHandler(async (req, res) => {
       $or: [{ customerId: customer._id }, { phone: { $in: phoneNumbers } }],
     }).sort({ createdAt: -1 }),
     EmailLog.find({
-      $or: [{ customerId: customer._id }, { to: { $in: emails } }],
+      $or: [{ customerId: customer._id }, { to: { $in: emails } }, { email: { $in: emails } }],
     }).sort({ createdAt: -1 }),
     Note.find({ customerId: customer._id }).sort({ createdAt: -1 }),
     Application.find({ customerId: customer._id }).sort({ createdAt: -1 }),
@@ -473,9 +474,9 @@ const getCustomerCommunicationHistory = asyncHandler(async (req, res) => {
       timestamp: e.createdAt,
       status: e.status,
       details: {
-        to: e.to,
+        to: e.to || e.email,
         subject: e.subject,
-        preview: e.bodySnippet,
+        preview: e.bodySnippet || (e.body ? e.body.slice(0, 160) : ''),
       },
       actor: e.sentByName || 'System',
     });

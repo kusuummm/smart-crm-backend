@@ -32,7 +32,8 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Invalid credentials');
   }
 
-  if (user.status === 'pending' || user.isApproved === false) {
+  const isAdminRole = ['admin', 'Admin', 'owner', 'Owner'].includes(user.role);
+  if (!isAdminRole && (user.status === 'pending' || user.isApproved === false)) {
     res.status(403);
     throw new Error('Your account is pending administrator approval. Please wait until an admin approves your account.');
   }

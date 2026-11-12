@@ -20,6 +20,7 @@ router.post('/bulk-delete', bulkDeleteCustomers);
 
 // Unified customer communication history (calls, whatsapp, emails, notes, applications)
 router.get('/:id/communication-history', getCustomerCommunicationHistory);
+router.get('/:id/timeline', getCustomerCommunicationHistory);
 
 router.route('/').post(createCustomer).get(getCustomers);
 router.route('/:id').get(getCustomerById).put(updateCustomer).delete(deleteCustomer);

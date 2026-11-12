@@ -24,7 +24,8 @@ const protect = asyncHandler(async (req, res, next) => {
       res.status(401);
       throw new Error('Not authorized, user no longer exists');
     }
-    if (user.status !== 'active' || user.isApproved === false) {
+    const isAdmin = ['admin', 'Admin', 'owner', 'Owner'].includes(user.role);
+    if (user.status !== 'active' || (!isAdmin && user.isApproved === false)) {
       res.status(403);
       throw new Error('Account is pending administrator approval or disabled. Contact your administrator.');
     }

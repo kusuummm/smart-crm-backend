@@ -120,8 +120,8 @@ const getCustomers = asyncHandler(async (req, res) => {
         { assignedTelecaller: req.user.name },
       ],
     });
-  } else {
-    // Admin CANNOT access contacts assigned to callers! Admin only sees unassigned contacts for assignment.
+  } else if (req.query.unassigned === 'true') {
+    // Admin explicitly filtering for unassigned contacts
     conditions.push({
       $or: [
         { telecallerId: null },

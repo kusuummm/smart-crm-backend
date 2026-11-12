@@ -32,6 +32,7 @@ const seed = async () => {
     password: 'admin123',
     role: 'admin',
     status: 'active',
+    isApproved: true,
   });
   const john = await User.create({
     name: 'John Smith',
@@ -39,6 +40,7 @@ const seed = async () => {
     password: 'john123',
     role: 'telecaller',
     status: 'active',
+    isApproved: true,
   });
   const sarah = await User.create({
     name: 'Sarah Wilson',
@@ -46,6 +48,7 @@ const seed = async () => {
     password: 'sarah123',
     role: 'telecaller',
     status: 'active',
+    isApproved: true,
   });
   await User.create({
     name: 'Mike Johnson',
@@ -68,6 +71,7 @@ const seed = async () => {
       leadSource: 'Website',
       interestedProduct: 'CRM Software',
       status: 'active',
+    isApproved: true,
       assignedTelecaller: john.name,
       telecallerId: john._id,
       remarks: 'Very interested in society membership & loan facility',
@@ -83,6 +87,7 @@ const seed = async () => {
       leadSource: 'Referral',
       interestedProduct: 'Fixed Deposit',
       status: 'active',
+    isApproved: true,
       assignedTelecaller: sarah.name,
       telecallerId: sarah._id,
       remarks: 'Submitted initial membership form',
@@ -97,6 +102,7 @@ const seed = async () => {
       leadSource: 'Social Media',
       interestedProduct: 'Cooperative Loan',
       status: 'active',
+    isApproved: true,
       assignedTelecaller: john.name,
       telecallerId: john._id,
       remarks: 'Looking for society registration',

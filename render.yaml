@@ -32,3 +32,15 @@ services:
         value: peyug_crm_webhook_verify_sec_948f21
       - key: WHATSAPP_APP_SECRET
         sync: false
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_SECURE
+        value: "false"
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: EMAIL_FROM
+        value: "PeYug CRM <support@peyug.com>"

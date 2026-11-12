@@ -5,7 +5,12 @@ const Lead = require('../models/Lead');
 const User = require('../models/User');
 const EmailLog = require('../models/EmailLog');
 const sendEmail = require('../utils/sendEmail');
-const { getCustomerReminderHtml, getCallerReminderHtml } = require('../services/meetingReminderService');
+const {
+  getCustomerReminderHtml,
+  getCallerReminderHtml,
+  dispatchMeetingStageReminder,
+  REMINDER_STAGES,
+} = require('../services/meetingReminderService');
 
 // @desc    Schedule a new meeting for a lead/customer
 // @route   POST /api/meetings
@@ -191,9 +196,25 @@ const createMeeting = asyncHandler(async (req, res) => {
     console.warn('[Meeting Controller] Confirmation email failed:', emailErr.message);
   }
 
+  // Multi-stage Cadence: If meeting is within 3 hours, dispatch the first applicable reminder right now!
+  try {
+    const nowTime = Date.now();
+    const diffMinutes = (meeting.meetingTime.getTime() - nowTime) / (60 * 1000);
+    if (diffMinutes <= 180 && diffMinutes > -15) {
+      for (const stageConfig of REMINDER_STAGES) {
+        if (diffMinutes <= stageConfig.maxWindow && diffMinutes > stageConfig.minWindow) {
+          await dispatchMeetingStageReminder(meeting, stageConfig);
+          break;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[Meeting Controller] Initial reminder stage dispatch error:', err.message);
+  }
+
   res.status(201).json({
     success: true,
-    message: 'Meeting scheduled successfully! Confirmation emails sent and 1-hour prior reminder armed.',
+    message: 'Meeting scheduled successfully! Confirmation notice sent and multi-stage cadence armed (3h -> 2h -> 90m -> 60m -> 30m -> 0m).',
     meeting,
   });
 });
@@ -267,16 +288,19 @@ const updateMeeting = asyncHandler(async (req, res) => {
     const [year, month, day] = meeting.date.split('-').map(Number);
     const [hour, minute] = meeting.time.split(':').map(Number);
     meeting.meetingTime = new Date(year, month - 1, day, hour, minute);
-    // Reset reminder so reminder sends 1-hour before new time
+    // Reset reminder stages so cadence re-arms for the new time
     meeting.reminderSent = false;
     meeting.reminderSentAt = null;
+    meeting.reminderStagesSent = [];
+    meeting.lastReminderStage = '';
+    meeting.lastReminderSentAt = null;
   }
 
   await meeting.save();
   res.json({ success: true, meeting });
 });
 
-// @desc    Trigger 1-hour reminder immediately (for testing or manual dispatch)
+// @desc    Trigger reminder stage immediately (for testing or manual dispatch)
 // @route   POST /api/meetings/:id/send-reminder
 // @access  Private
 const sendMeetingReminderNow = asyncHandler(async (req, res) => {
@@ -286,65 +310,27 @@ const sendMeetingReminderNow = asyncHandler(async (req, res) => {
     throw new Error('Meeting not found');
   }
 
-  const customerSubject = `Reminder: Meeting "${meeting.title}" starts in 1 hour (${meeting.time})`;
-  const callerSubject = `Upcoming Meeting in 1 Hour: ${meeting.customerName} (${meeting.title})`;
+  const { stage } = req.body;
+  let targetStageConfig = null;
 
-  const customerHtml = getCustomerReminderHtml(meeting);
-  const callerHtml = getCallerReminderHtml(meeting);
-
-  let custResult = { success: false };
-  if (meeting.customerEmail && meeting.customerEmail.includes('@')) {
-    custResult = await sendEmail({
-      to: meeting.customerEmail,
-      subject: customerSubject,
-      html: customerHtml,
-    });
-
-    await EmailLog.create({
-      customerId: meeting.customerId,
-      customerName: meeting.customerName,
-      email: meeting.customerEmail,
-      subject: customerSubject,
-      body: customerHtml,
-      type: 'meeting-reminder',
-      status: custResult.success ? 'sent' : 'failed',
-      error: custResult.error || '',
-      sentBy: req.user._id,
-      sentByName: req.user.name,
-    });
+  if (stage) {
+    targetStageConfig = REMINDER_STAGES.find((s) => s.stage === stage);
   }
 
-  let callerResult = { success: false };
-  if (meeting.telecallerEmail && meeting.telecallerEmail.includes('@')) {
-    callerResult = await sendEmail({
-      to: meeting.telecallerEmail,
-      subject: callerSubject,
-      html: callerHtml,
-    });
-
-    await EmailLog.create({
-      customerId: meeting.customerId,
-      customerName: meeting.telecallerName,
-      email: meeting.telecallerEmail,
-      subject: callerSubject,
-      body: callerHtml,
-      type: 'meeting-reminder',
-      status: callerResult.success ? 'sent' : 'failed',
-      error: callerResult.error || '',
-      sentBy: req.user._id,
-      sentByName: req.user.name,
-    });
+  if (!targetStageConfig) {
+    const diffMinutes = (meeting.meetingTime.getTime() - Date.now()) / (60 * 1000);
+    targetStageConfig =
+      REMINDER_STAGES.find((s) => diffMinutes <= s.maxWindow && diffMinutes > s.minWindow) ||
+      REMINDER_STAGES[0]; // fallback to 3h
   }
 
-  meeting.reminderSent = true;
-  meeting.reminderSentAt = new Date();
-  await meeting.save();
+  const result = await dispatchMeetingStageReminder(meeting, targetStageConfig);
 
   res.json({
     success: true,
-    message: `1-hour meeting reminder dispatched to both ${meeting.customerEmail} and ${meeting.telecallerEmail}`,
-    customerResult: custResult,
-    callerResult,
+    message: `Meeting reminder (${targetStageConfig.label}) dispatched to ${meeting.customerEmail} and WhatsApp ${meeting.customerPhone || 'N/A'}`,
+    stage: targetStageConfig.stage,
+    result,
   });
 });
 

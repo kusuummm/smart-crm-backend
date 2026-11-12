@@ -1,5 +1,17 @@
 const mongoose = require('mongoose');
 
+const reminderStageSchema = new mongoose.Schema(
+  {
+    stage: { type: String, required: true }, // '3h', '2h', '90m', '60m', '30m', '0m'
+    label: { type: String, default: '' },
+    sentAt: { type: Date, default: Date.now },
+    emailSent: { type: Boolean, default: false },
+    whatsappSent: { type: Boolean, default: false },
+    error: { type: String, default: '' },
+  },
+  { _id: false }
+);
+
 const meetingSchema = new mongoose.Schema(
   {
     leadId: { type: mongoose.Schema.Types.ObjectId, ref: 'Lead' },
@@ -22,7 +34,11 @@ const meetingSchema = new mongoose.Schema(
       type: String,
       default: 'scheduled',
     },
-    reminderSent: { type: Boolean, default: false },
+    // Multi-stage Reminder Cadence: 3h -> 2h (after 1h) -> 90m (after 30m) -> 60m (after 30m) -> 30m (after 30m) -> 0m (starting now)
+    reminderStagesSent: [reminderStageSchema],
+    lastReminderStage: { type: String, default: '' },
+    lastReminderSentAt: { type: Date, default: null },
+    reminderSent: { type: Boolean, default: false }, // legacy backward compatibility
     reminderSentAt: { type: Date, default: null },
     confirmationSent: { type: Boolean, default: false },
   },

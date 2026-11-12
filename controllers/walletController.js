@@ -1,5 +1,6 @@
 const asyncHandler = require('express-async-handler');
 const Wallet = require('../models/Wallet');
+const User = require('../models/User');
 
 // @desc    Get user's wallet and balance
 // @route   GET /api/wallet
@@ -15,6 +16,11 @@ const getWallet = asyncHandler(async (req, res) => {
       transactions: [],
     });
   }
+
+  // Keep User model balance in sync with Wallet model
+  await User.findByIdAndUpdate(req.user._id, {
+    balance: `₹${wallet.balance.toFixed(1)}`,
+  }).catch(() => {});
 
   res.json({
     success: true,
@@ -51,6 +57,11 @@ const rechargeWallet = asyncHandler(async (req, res) => {
   });
 
   await wallet.save();
+
+  // Keep User model balance in sync with Wallet model
+  await User.findByIdAndUpdate(req.user._id, {
+    balance: `₹${wallet.balance.toFixed(1)}`,
+  }).catch(() => {});
 
   res.json({
     success: true,

@@ -1,6 +1,7 @@
 const emailNotificationService = require('../services/emailNotificationService');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
+const Wallet = require('../models/Wallet');
 const Session = require('../models/Session');
 const Otp = require('../models/Otp');
 const generateToken = require('../utils/generateToken');
@@ -85,7 +86,22 @@ const login = asyncHandler(async (req, res) => {
 // @route   GET /api/auth/me
 // @access  Private
 const getMe = asyncHandler(async (req, res) => {
-  res.json({ success: true, user: req.user });
+  let userData = req.user;
+  if (req.user && req.user.toObject) {
+    userData = req.user.toObject();
+  } else if (req.user) {
+    userData = { ...req.user };
+  }
+
+  try {
+    const Wallet = require('../models/Wallet');
+    const wallet = await Wallet.findOne({ userId: req.user._id });
+    if (wallet) {
+      userData.balance = `₹${wallet.balance.toFixed(1)}`;
+    }
+  } catch {}
+
+  res.json({ success: true, user: userData });
 });
 
 // @desc    Update own profile (name, phone). Email/role are intentionally

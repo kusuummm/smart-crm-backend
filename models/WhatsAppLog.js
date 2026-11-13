@@ -2,20 +2,25 @@ const mongoose = require('mongoose');
 
 const whatsAppLogSchema = new mongoose.Schema(
   {
-    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: true },
+    customerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Customer', required: false },
     customerName: { type: String, default: 'Customer' },
     phone: { type: String, required: true },
     mobile: { type: String, default: '' },
     message: { type: String, required: true },
     type: {
       type: String,
-      enum: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application'],
-      default: 'template',
+      enum: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'],
+      default: 'custom',
     },
     status: {
       type: String,
       enum: ['sent', 'delivered', 'read', 'failed', 'logged', 'queued'],
       default: 'sent',
+    },
+    deliveryMode: {
+      type: String,
+      enum: ['cloud_api', 'wa_link', 'wa_me', 'mock'],
+      default: 'cloud_api',
     },
     error: { type: String, default: '' },
     sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

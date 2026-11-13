@@ -201,6 +201,23 @@ async function runApiVerification() {
     return { status: res.status, detail: `${res.data.logs?.length || 0} messages logged` };
   });
 
+  await test('WhatsApp Send Custom Message (Phone Sanitization & waLink)', 'WhatsApp', async () => {
+    const res = await axios.post(
+      `${baseUrl}/whatsapp/send`,
+      {
+        phone: '8239977386',
+        name: 'komal rathore',
+        message: 'Hello komal, your quotation is ready!',
+        type: 'custom',
+      },
+      authHeader()
+    );
+    if (!res.data.success || !res.data.waLink.includes('918239977386')) {
+      throw new Error('Expected success with sanitized waLink');
+    }
+    return { status: res.status, detail: `Delivered via: ${res.data.deliveredVia}, Phone: ${res.data.recipient?.phone}` };
+  });
+
   // 4. Customers API
   await test('Get Customers List', 'Customers', async () => {
     const res = await axios.get(`${baseUrl}/customers`, authHeader());
@@ -362,6 +379,11 @@ async function runApiVerification() {
   await test('Telecaller Performance Reports API (Admin)', 'CRM Modules', async () => {
     const res = await axios.get(`${baseUrl}/reports/telecaller-performance`, authHeader());
     return { status: res.status, detail: `${res.data.rows?.length || 0} callers summarized` };
+  });
+
+  await test('Callers Progress Report API (Admin & Manager)', 'CRM Modules', async () => {
+    const res = await axios.get(`${baseUrl}/users/callers-progress-report`, authHeader());
+    return { status: res.status, detail: `Trend days: ${res.data.dailyTrend?.length || 0}, Summary calls: ${res.data.summary?.totalCalls || 0}` };
   });
 
   await test('Monthly Activity Reports API (Telecaller)', 'CRM Modules', async () => {

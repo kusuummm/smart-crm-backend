@@ -1,8 +1,15 @@
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const Customer = require('../models/Customer');
-const { sendWhatsAppTemplate } = require('../utils/sendWhatsApp');
+const {
+  cleanPhoneNumber,
+  getWhatsAppWebLink,
+  getWaMeLink,
+  sendWhatsAppText,
+  sendWhatsAppTemplate,
+} = require('../utils/sendWhatsApp');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -10,63 +17,102 @@ const getTelecallerCustomerIds = async (user) => {
   }).distinct('_id');
 };
 
-// @desc    Send WhatsApp Message (Meta hello_world template default)
+// @desc    Send WhatsApp Message (Meta Cloud API with automatic WhatsApp Web / wa.me bridge fallback)
 // @route   POST /api/whatsapp/send
 // @access  Private
 const sendMessage = asyncHandler(async (req, res) => {
-  const { customerId, type = 'follow-up' } = req.body;
+  const { customerId, phone, mobile, name, message, text, type = 'custom' } = req.body;
+  const messageText = (message || text || '').trim();
 
-  const customer = await Customer.findById(customerId);
-  if (!customer) {
-    res.status(404);
-    throw new Error('Customer not found');
+  if (!messageText) {
+    res.status(400);
+    throw new Error('Message body cannot be empty');
+  }
+
+  let customer = null;
+  if (customerId && mongoose.isValidObjectId(customerId)) {
+    customer = await Customer.findById(customerId);
+  }
+
+  const rawPhone = phone || mobile || customer?.mobile || customer?.phone || customer?.alternateNumber;
+  if (!customer && rawPhone) {
+    // Try to find customer by phone or mobile
+    customer = await Customer.findOne({
+      $or: [{ mobile: rawPhone }, { phone: rawPhone }, { alternateNumber: rawPhone }],
+    });
   }
 
   const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
-    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
-                       customer.assignedTelecaller === req.user.name;
+  if (customer && !['admin', 'owner', 'manager'].includes(callerRole)) {
+    const isAssigned =
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name ||
+      !customer.telecallerId;
     if (!isAssigned) {
       res.status(403);
       throw new Error('You can only send WhatsApp messages to customers assigned to you');
     }
   }
 
-  const targetMobile = customer.mobile || customer.phone || customer.alternateNumber;
+  const targetMobile = rawPhone || customer?.mobile || customer?.phone || customer?.alternateNumber;
   if (!targetMobile) {
     res.status(400);
-    throw new Error('This customer has no mobile number on file');
+    throw new Error('Recipient mobile number is required');
   }
 
-  // Meta default template
-  const result = await sendWhatsAppTemplate({
-    to: targetMobile,
-    templateName: 'hello_world',
-    languageCode: 'en_US',
-    params: [],
-  });
+  const cleanPhone = cleanPhoneNumber(targetMobile);
+  const recipientName = customer?.name || name || 'Customer';
+  const waLink = getWhatsAppWebLink(cleanPhone, messageText);
+  const waMeLink = getWaMeLink(cleanPhone, messageText);
 
-  const log = await WhatsAppLog.create({
-    customerId,
-    customerName: customer.name,
-    phone: targetMobile,
-    message: 'hello_world template',
-    type,
-    status: result.success ? 'sent' : 'failed',
-    sentBy: req.user._id,
-    sentByName: req.user.name,
-    providerMessageId: result.providerMessageId || '',
-  });
+  // Attempt real delivery via Meta WhatsApp Cloud API if credentials configured
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
 
-  if (!result.success) {
-    return res.status(502).json({
-      success: false,
-      message: `WhatsApp send failed: ${result.error}`,
-      log,
+  let deliveryResult = { success: false };
+  if (token && phoneId) {
+    deliveryResult = await sendWhatsAppText({
+      to: cleanPhone,
+      message: messageText,
     });
   }
 
-  res.status(201).json({ success: true, log });
+  const isCloudSuccess = Boolean(deliveryResult.success);
+  const logStatus = isCloudSuccess ? 'sent' : 'logged';
+  const deliveryMode = isCloudSuccess ? 'cloud_api' : 'wa_link';
+
+  const log = await WhatsAppLog.create({
+    customerId: customer?._id || undefined,
+    customerName: recipientName,
+    phone: cleanPhone || targetMobile,
+    mobile: cleanPhone || targetMobile,
+    message: messageText,
+    type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
+      ? type
+      : 'custom',
+    status: logStatus,
+    deliveryMode,
+    error: isCloudSuccess ? '' : (deliveryResult.error || 'Direct wa_link bridge mode active'),
+    sentBy: req.user._id,
+    sentByName: req.user.name,
+    providerMessageId: deliveryResult.providerMessageId || '',
+  });
+
+  res.status(201).json({
+    success: true,
+    deliveredVia: deliveryMode,
+    isCloudApi: isCloudSuccess,
+    waLink,
+    waMeLink,
+    message: messageText,
+    recipient: {
+      id: customer?._id,
+      name: recipientName,
+      phone: cleanPhone,
+    },
+    warning: isCloudSuccess ? undefined : deliveryResult.error,
+    log,
+  });
 });
 
 // @desc    Send Custom Template
@@ -75,6 +121,7 @@ const sendMessage = asyncHandler(async (req, res) => {
 const sendTemplate = asyncHandler(async (req, res) => {
   const {
     customerId,
+    phone,
     templateName,
     languageCode = 'en_US',
     params = [],
@@ -82,121 +129,134 @@ const sendTemplate = asyncHandler(async (req, res) => {
     displayMessage,
   } = req.body;
 
-  const customer = await Customer.findById(customerId);
-  if (!customer) {
-    res.status(404);
-    throw new Error('Customer not found');
+  let customer = null;
+  if (customerId && mongoose.isValidObjectId(customerId)) {
+    customer = await Customer.findById(customerId);
+  }
+
+  const rawPhone = phone || customer?.mobile || customer?.phone || customer?.alternateNumber;
+  if (!customer && rawPhone) {
+    customer = await Customer.findOne({
+      $or: [{ mobile: rawPhone }, { phone: rawPhone }, { alternateNumber: rawPhone }],
+    });
   }
 
   const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
-    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
-                       customer.assignedTelecaller === req.user.name;
+  if (customer && !['admin', 'owner', 'manager'].includes(callerRole)) {
+    const isAssigned =
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name ||
+      !customer.telecallerId;
     if (!isAssigned) {
       res.status(403);
       throw new Error('You can only send WhatsApp messages to customers assigned to you');
     }
   }
 
-  const targetMobile = customer.mobile || customer.phone || customer.alternateNumber;
+  const targetMobile = rawPhone || customer?.mobile || customer?.phone || customer?.alternateNumber;
   if (!targetMobile) {
     res.status(400);
     throw new Error('This customer has no mobile number on file');
   }
 
+  const cleanPhone = cleanPhoneNumber(targetMobile);
+  const waLink = getWhatsAppWebLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
+  const waMeLink = getWaMeLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
+
   const result = await sendWhatsAppTemplate({
-    to: targetMobile,
+    to: cleanPhone,
     templateName,
     languageCode,
     params,
   });
 
+  const isCloudSuccess = Boolean(result.success);
   const log = await WhatsAppLog.create({
-    customerId,
-    customerName: customer.name,
-    phone: targetMobile,
+    customerId: customer?._id || undefined,
+    customerName: customer?.name || 'Customer',
+    phone: cleanPhone || targetMobile,
+    mobile: cleanPhone || targetMobile,
     message: displayMessage || `[Template: ${templateName}]`,
-    type,
-    status: result.success ? 'sent' : 'failed',
+    type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
+      ? type
+      : 'template',
+    status: isCloudSuccess ? 'sent' : 'logged',
+    deliveryMode: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    error: isCloudSuccess ? '' : (result.error || ''),
     sentBy: req.user._id,
     sentByName: req.user.name,
     providerMessageId: result.providerMessageId || '',
   });
 
-  if (!result.success) {
-    return res.status(502).json({
-      success: false,
-      message: `WhatsApp send failed: ${result.error}`,
-      log,
-    });
-  }
-
-  res.status(201).json({ success: true, log });
+  res.status(201).json({
+    success: true,
+    deliveredVia: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    isCloudApi: isCloudSuccess,
+    waLink,
+    waMeLink,
+    log,
+    warning: isCloudSuccess ? undefined : result.error,
+  });
 });
 
 // @desc    Follow Up Reminder
 // @route   POST /api/whatsapp/followup-reminder
 // @access  Private
 const sendFollowUpReminder = asyncHandler(async (req, res) => {
-  const { customerId } = req.body;
+  const { customerId, phone, message } = req.body;
 
-  const customer = await Customer.findById(customerId);
-  if (!customer) {
-    res.status(404);
-    throw new Error('Customer not found');
+  let customer = null;
+  if (customerId && mongoose.isValidObjectId(customerId)) {
+    customer = await Customer.findById(customerId);
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
-    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
-                       customer.assignedTelecaller === req.user.name;
-    if (!isAssigned) {
-      res.status(403);
-      throw new Error('You can only send WhatsApp reminders to customers assigned to you');
-    }
-  }
-
-  const reminderPhone = customer.mobile || customer.phone || customer.alternateNumber;
+  const reminderPhone = phone || customer?.mobile || customer?.phone || customer?.alternateNumber;
   if (!reminderPhone) {
     res.status(400);
     throw new Error('This customer has no mobile number on file');
   }
 
-  const result = await sendWhatsAppTemplate({
-    to: reminderPhone,
-    templateName: 'hello_world',
-    languageCode: 'en_US',
-    params: [],
+  const cleanPhone = cleanPhoneNumber(reminderPhone);
+  const reminderText = message || `Hello ${customer?.name || 'there'}, this is a follow-up reminder from our team regarding your inquiry. Please let us know if you need any assistance!`;
+  const waLink = getWhatsAppWebLink(cleanPhone, reminderText);
+  const waMeLink = getWaMeLink(cleanPhone, reminderText);
+
+  const result = await sendWhatsAppText({
+    to: cleanPhone,
+    message: reminderText,
   });
 
+  const isCloudSuccess = Boolean(result.success);
   const log = await WhatsAppLog.create({
-    customerId,
-    customerName: customer.name,
-    phone: reminderPhone,
-    message: 'hello_world followup',
+    customerId: customer?._id || undefined,
+    customerName: customer?.name || 'Customer',
+    phone: cleanPhone || reminderPhone,
+    mobile: cleanPhone || reminderPhone,
+    message: reminderText,
     type: 'follow-up',
-    status: result.success ? 'sent' : 'failed',
+    status: isCloudSuccess ? 'sent' : 'logged',
+    deliveryMode: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    error: isCloudSuccess ? '' : (result.error || ''),
     sentBy: req.user._id,
     sentByName: req.user.name,
     providerMessageId: result.providerMessageId || '',
   });
 
-  if (!result.success) {
-    return res.status(502).json({
-      success: false,
-      message: `WhatsApp send failed: ${result.error}`,
-      log,
-    });
-  }
-
-  res.status(201).json({ success: true, log });
+  res.status(201).json({
+    success: true,
+    deliveredVia: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    isCloudApi: isCloudSuccess,
+    waLink,
+    waMeLink,
+    log,
+  });
 });
 
 // @desc    Get WhatsApp Logs
-// @route   GET /api/whatsapp?type=&status=&customerId=&page=&limit=
+// @route   GET /api/whatsapp?type=&status=&customerId=&phone=&page=&limit=
 // @access  Private
 const getLogs = asyncHandler(async (req, res) => {
-  const { type, status, customerId, page = 1, limit = 10, sentBy } = req.query;
+  const { type, status, customerId, phone, page = 1, limit = 10, sentBy } = req.query;
   const conditions = [];
 
   const callerRole = (req.user?.role || '').toLowerCase();
@@ -210,6 +270,18 @@ const getLogs = asyncHandler(async (req, res) => {
   if (type) conditions.push({ type });
   if (status) conditions.push({ status });
   if (customerId) conditions.push({ customerId });
+  if (phone) {
+    const clean = cleanPhoneNumber(phone);
+    conditions.push({
+      $or: [
+        { phone },
+        { mobile: phone },
+        { phone: clean },
+        { mobile: clean },
+        { phone: { $regex: clean.slice(-10), $options: 'i' } },
+      ],
+    });
+  }
 
   const filter = conditions.length > 0 ? { $and: conditions } : {};
 

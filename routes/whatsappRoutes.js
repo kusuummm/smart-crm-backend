@@ -7,8 +7,11 @@ const {
   getLogs,
   verifyWebhook,
   receiveWebhook,
+  getConfig,
+  updateConfig,
+  testConnection,
 } = require('../controllers/whatsappController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 // Public webhook endpoints - Meta calls these directly, no user JWT available.
 // Verified instead via the shared WHATSAPP_WEBHOOK_VERIFY_TOKEN (GET) and, in
@@ -21,5 +24,10 @@ router.post('/send', sendMessage);
 router.post('/send-template', sendTemplate);
 router.post('/send-followup-reminder', sendFollowUpReminder);
 router.get('/', getLogs);
+
+// WhatsApp Configuration & Diagnostics
+router.get('/config', authorize('manager'), getConfig);
+router.put('/config', authorize('admin'), updateConfig);
+router.post('/test-connection', authorize('admin'), testConnection);
 
 module.exports = router;

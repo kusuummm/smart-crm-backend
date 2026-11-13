@@ -9,6 +9,11 @@ const {
   getWaMeLink,
   sendWhatsAppText,
   sendWhatsAppTemplate,
+  loadDbConfig,
+  getToken,
+  getPhoneId,
+  setRuntimeWhatsAppConfig,
+  verifyMetaConnection,
 } = require('../utils/sendWhatsApp');
 
 const getTelecallerCustomerIds = async (user) => {
@@ -386,6 +391,85 @@ const receiveWebhook = (req, res) => {
   });
 };
 
+// @desc    Get WhatsApp API Configuration
+// @route   GET /api/whatsapp/config
+// @access  Private/Admin
+const getConfig = asyncHandler(async (req, res) => {
+  await loadDbConfig();
+  const token = getToken() || '';
+  const phoneId = getPhoneId() || '';
+  const wabaId = process.env.WHATSAPP_WABA_ID || '';
+
+  const maskedToken = token.length > 8
+    ? `${token.substring(0, 6)}••••••••${token.substring(token.length - 4)}`
+    : (token ? '••••••••' : '');
+
+  res.json({
+    success: true,
+    isConfigured: Boolean(token && phoneId),
+    phoneNumberId: phoneId,
+    wabaId,
+    maskedToken,
+    hasToken: Boolean(token),
+    webhookUrl: '/api/whatsapp/webhook',
+  });
+});
+
+// @desc    Update WhatsApp API Configuration (Access Token, Phone ID, WABA)
+// @route   PUT /api/whatsapp/config
+// @access  Private/Admin
+const updateConfig = asyncHandler(async (req, res) => {
+  const { accessToken, phoneNumberId, wabaId } = req.body;
+  const SystemConfig = require('../models/SystemConfig');
+
+  let current = await SystemConfig.findOne({ key: 'whatsapp_config' });
+  const existingVal = current?.value || {};
+
+  const updatedVal = {
+    accessToken: accessToken !== undefined ? accessToken.trim() : existingVal.accessToken,
+    phoneNumberId: phoneNumberId !== undefined ? phoneNumberId.trim() : existingVal.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID,
+    wabaId: wabaId !== undefined ? wabaId.trim() : existingVal.wabaId || process.env.WHATSAPP_WABA_ID,
+  };
+
+  await SystemConfig.findOneAndUpdate(
+    { key: 'whatsapp_config' },
+    { value: updatedVal },
+    { upsert: true, new: true }
+  );
+
+  setRuntimeWhatsAppConfig(updatedVal);
+
+  res.json({
+    success: true,
+    message: 'WhatsApp API credentials updated successfully. Messages will now send from your registered company number.',
+    isConfigured: Boolean(updatedVal.accessToken && updatedVal.phoneNumberId),
+    phoneNumberId: updatedVal.phoneNumberId,
+    wabaId: updatedVal.wabaId,
+  });
+});
+
+// @desc    Test Meta WhatsApp Connection Handshake
+// @route   POST /api/whatsapp/test-connection
+// @access  Private/Admin
+const testConnection = asyncHandler(async (req, res) => {
+  const { token, phoneId } = req.body || {};
+  const result = await verifyMetaConnection(token, phoneId);
+
+  if (!result.connected) {
+    return res.status(400).json({
+      success: false,
+      message: `Meta Cloud API Handshake Failed: ${result.error}`,
+      details: result,
+    });
+  }
+
+  res.json({
+    success: true,
+    message: `Meta Cloud API Handshake Successful! Verified as "${result.verifiedName || 'WhatsApp Business'}" (${result.displayPhoneNumber || result.phoneId})`,
+    details: result,
+  });
+});
+
 module.exports = {
   sendMessage,
   sendTemplate,
@@ -393,4 +477,7 @@ module.exports = {
   getLogs,
   verifyWebhook,
   receiveWebhook,
+  getConfig,
+  updateConfig,
+  testConnection,
 };

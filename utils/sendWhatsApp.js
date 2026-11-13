@@ -1,7 +1,75 @@
 const axios = require('axios');
 
-const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
-const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
+let cachedDbConfig = null;
+
+const loadDbConfig = async () => {
+  if (cachedDbConfig !== null) return cachedDbConfig;
+  try {
+    const SystemConfig = require('../models/SystemConfig');
+    const doc = await SystemConfig.findOne({ key: 'whatsapp_config' });
+    if (doc?.value) {
+      cachedDbConfig = doc.value;
+      if (cachedDbConfig.accessToken && !process.env.WHATSAPP_ACCESS_TOKEN) {
+        process.env.WHATSAPP_ACCESS_TOKEN = cachedDbConfig.accessToken;
+      }
+      if (cachedDbConfig.phoneNumberId && !process.env.WHATSAPP_PHONE_NUMBER_ID) {
+        process.env.WHATSAPP_PHONE_NUMBER_ID = cachedDbConfig.phoneNumberId;
+      }
+    } else {
+      cachedDbConfig = {};
+    }
+  } catch (_) {
+    cachedDbConfig = {};
+  }
+  return cachedDbConfig;
+};
+
+const setRuntimeWhatsAppConfig = (cfg) => {
+  cachedDbConfig = { ...(cachedDbConfig || {}), ...cfg };
+  if (cfg.accessToken) process.env.WHATSAPP_ACCESS_TOKEN = cfg.accessToken;
+  if (cfg.phoneNumberId) process.env.WHATSAPP_PHONE_NUMBER_ID = cfg.phoneNumberId;
+  if (cfg.wabaId) process.env.WHATSAPP_WABA_ID = cfg.wabaId;
+};
+
+const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || cachedDbConfig?.accessToken;
+const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || cachedDbConfig?.phoneNumberId;
+
+/**
+ * Verify Meta Cloud API connection directly with Graph API
+ */
+const verifyMetaConnection = async (tokenOverride, phoneIdOverride) => {
+  await loadDbConfig();
+  const token = tokenOverride || getToken();
+  const phoneId = phoneIdOverride || getPhoneId();
+
+  if (!token || !phoneId) {
+    return {
+      connected: false,
+      error: 'WhatsApp Access Token or Phone Number ID is missing',
+    };
+  }
+
+  try {
+    const version = process.env.WHATSAPP_API_VERSION || 'v23.0';
+    const { data } = await axios.get(`https://graph.facebook.com/${version}/${phoneId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { fields: 'verified_name,display_phone_number,quality_rating,code_verification_status' },
+    });
+    return {
+      connected: true,
+      verifiedName: data.verified_name,
+      displayPhoneNumber: data.display_phone_number,
+      qualityRating: data.quality_rating,
+      verificationStatus: data.code_verification_status,
+      phoneId,
+    };
+  } catch (err) {
+    return {
+      connected: false,
+      error: err.response?.data?.error?.message || err.message,
+    };
+  }
+};
 
 /**
  * Clean and normalize phone numbers into international numeric format (e.g., '918239977386')
@@ -178,5 +246,10 @@ module.exports = {
   getWaMeLink,
   sendWhatsAppText,
   sendWhatsAppTemplate,
+  loadDbConfig,
+  setRuntimeWhatsAppConfig,
+  verifyMetaConnection,
+  getToken,
+  getPhoneId,
 };
 

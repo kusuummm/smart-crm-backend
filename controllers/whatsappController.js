@@ -22,16 +22,22 @@ const getTelecallerCustomerIds = async (user) => {
   }).distinct('_id');
 };
 
-// @desc    Send WhatsApp Message (Meta Cloud API with automatic WhatsApp Web / wa.me bridge fallback)
+// @desc    Send WhatsApp Message (Meta Cloud API or Instant CRM Test Mode)
 // @route   POST /api/whatsapp/send
 // @access  Private
 const sendMessage = asyncHandler(async (req, res) => {
   const { customerId, phone, mobile, name, message, text, type = 'custom' } = req.body;
-  const messageText = (message || text || '').trim();
+  let messageText = (message || text || '').trim();
 
+  // If message text is empty, generate an appropriate polite default based on type
   if (!messageText) {
-    res.status(400);
-    throw new Error('Message body cannot be empty');
+    if (type === 'greeting') {
+      messageText = `Hello ${name || 'there'}! Warm greetings from our team. Wishing you a wonderful day!`;
+    } else if (type === 'follow-up') {
+      messageText = `Hello ${name || 'there'}, following up regarding our recent discussion. Please let us know if you need any assistance!`;
+    } else {
+      messageText = `Hello ${name || 'there'}, thank you for connecting with us!`;
+    }
   }
 
   let customer = null;
@@ -71,11 +77,13 @@ const sendMessage = asyncHandler(async (req, res) => {
   const waMeLink = getWaMeLink(cleanPhone, messageText);
 
   // Attempt real delivery via Meta WhatsApp Cloud API if credentials configured
-  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
-  const phoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
+  await loadDbConfig();
+  const token = getToken();
+  const phoneId = getPhoneId();
+  const isConfigured = Boolean(token && phoneId);
 
   let deliveryResult = { success: false };
-  if (token && phoneId) {
+  if (isConfigured) {
     deliveryResult = await sendWhatsAppText({
       to: cleanPhone,
       message: messageText,
@@ -83,8 +91,16 @@ const sendMessage = asyncHandler(async (req, res) => {
   }
 
   const isCloudSuccess = Boolean(deliveryResult.success);
-  const logStatus = isCloudSuccess ? 'sent' : 'logged';
-  const deliveryMode = isCloudSuccess ? 'cloud_api' : 'wa_link';
+  // If Cloud API configured and sent: 'cloud_api'
+  // If not configured: 'test_mode' (allows in-CRM test sending without tokens)
+  // If configured but returned error: 'cloud_api' with error
+  const deliveryMode = isCloudSuccess
+    ? 'cloud_api'
+    : (!isConfigured ? 'test_mode' : 'cloud_api');
+
+  const logStatus = isCloudSuccess
+    ? 'sent'
+    : (!isConfigured ? 'delivered' : 'failed');
 
   const log = await WhatsAppLog.create({
     customerId: customer?._id || undefined,
@@ -92,21 +108,24 @@ const sendMessage = asyncHandler(async (req, res) => {
     phone: cleanPhone || targetMobile,
     mobile: cleanPhone || targetMobile,
     message: messageText,
-    type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
-      ? type
+    type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom', 'greeting'].includes(type)
+      ? (type === 'greeting' ? 'general' : type)
       : 'custom',
     status: logStatus,
     deliveryMode,
-    error: isCloudSuccess ? '' : (deliveryResult.error || 'Direct wa_link bridge mode active'),
+    error: isCloudSuccess ? '' : (!isConfigured ? '' : (deliveryResult.error || 'Meta Cloud API delivery failed')),
     sentBy: req.user._id,
     sentByName: req.user.name,
-    providerMessageId: deliveryResult.providerMessageId || '',
+    providerMessageId: isCloudSuccess
+      ? (deliveryResult.providerMessageId || '')
+      : `test_msg_${Date.now()}`,
   });
 
   res.status(201).json({
     success: true,
     deliveredVia: deliveryMode,
     isCloudApi: isCloudSuccess,
+    isTestMode: !isConfigured,
     waLink,
     waMeLink,
     message: messageText,
@@ -115,7 +134,10 @@ const sendMessage = asyncHandler(async (req, res) => {
       name: recipientName,
       phone: cleanPhone,
     },
-    warning: isCloudSuccess ? undefined : deliveryResult.error,
+    notice: !isConfigured
+      ? 'Delivered in CRM Testing Mode. Tokens can be added later in Admin Panel to route to real external numbers.'
+      : undefined,
+    warning: isCloudSuccess ? undefined : (isConfigured ? deliveryResult.error : undefined),
     log,
   });
 });
@@ -168,14 +190,29 @@ const sendTemplate = asyncHandler(async (req, res) => {
   const waLink = getWhatsAppWebLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
   const waMeLink = getWaMeLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
 
-  const result = await sendWhatsAppTemplate({
-    to: cleanPhone,
-    templateName,
-    languageCode,
-    params,
-  });
+  await loadDbConfig();
+  const token = getToken();
+  const phoneId = getPhoneId();
+  const isConfigured = Boolean(token && phoneId);
+
+  let result = { success: false };
+  if (isConfigured) {
+    result = await sendWhatsAppTemplate({
+      to: cleanPhone,
+      templateName,
+      languageCode,
+      params,
+    });
+  }
 
   const isCloudSuccess = Boolean(result.success);
+  const deliveryMode = isCloudSuccess
+    ? 'cloud_api'
+    : (!isConfigured ? 'test_mode' : 'cloud_api');
+  const logStatus = isCloudSuccess
+    ? 'sent'
+    : (!isConfigured ? 'delivered' : 'failed');
+
   const log = await WhatsAppLog.create({
     customerId: customer?._id || undefined,
     customerName: customer?.name || 'Customer',
@@ -185,22 +222,26 @@ const sendTemplate = asyncHandler(async (req, res) => {
     type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
       ? type
       : 'template',
-    status: isCloudSuccess ? 'sent' : 'logged',
-    deliveryMode: isCloudSuccess ? 'cloud_api' : 'wa_link',
-    error: isCloudSuccess ? '' : (result.error || ''),
+    status: logStatus,
+    deliveryMode,
+    error: isCloudSuccess ? '' : (!isConfigured ? '' : (result.error || '')),
     sentBy: req.user._id,
     sentByName: req.user.name,
-    providerMessageId: result.providerMessageId || '',
+    providerMessageId: isCloudSuccess ? (result.providerMessageId || '') : `test_tpl_${Date.now()}`,
   });
 
   res.status(201).json({
     success: true,
-    deliveredVia: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    deliveredVia: deliveryMode,
     isCloudApi: isCloudSuccess,
+    isTestMode: !isConfigured,
     waLink,
     waMeLink,
     log,
-    warning: isCloudSuccess ? undefined : result.error,
+    notice: !isConfigured
+      ? 'Delivered in CRM Testing Mode. Add Meta Cloud API credentials in Admin Panel to route to real external numbers.'
+      : undefined,
+    warning: isCloudSuccess ? undefined : (isConfigured ? result.error : undefined),
   });
 });
 
@@ -226,12 +267,27 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
   const waLink = getWhatsAppWebLink(cleanPhone, reminderText);
   const waMeLink = getWaMeLink(cleanPhone, reminderText);
 
-  const result = await sendWhatsAppText({
-    to: cleanPhone,
-    message: reminderText,
-  });
+  await loadDbConfig();
+  const token = getToken();
+  const phoneId = getPhoneId();
+  const isConfigured = Boolean(token && phoneId);
+
+  let result = { success: false };
+  if (isConfigured) {
+    result = await sendWhatsAppText({
+      to: cleanPhone,
+      message: reminderText,
+    });
+  }
 
   const isCloudSuccess = Boolean(result.success);
+  const deliveryMode = isCloudSuccess
+    ? 'cloud_api'
+    : (!isConfigured ? 'test_mode' : 'cloud_api');
+  const logStatus = isCloudSuccess
+    ? 'sent'
+    : (!isConfigured ? 'delivered' : 'failed');
+
   const log = await WhatsAppLog.create({
     customerId: customer?._id || undefined,
     customerName: customer?.name || 'Customer',
@@ -239,21 +295,26 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
     mobile: cleanPhone || reminderPhone,
     message: reminderText,
     type: 'follow-up',
-    status: isCloudSuccess ? 'sent' : 'logged',
-    deliveryMode: isCloudSuccess ? 'cloud_api' : 'wa_link',
-    error: isCloudSuccess ? '' : (result.error || ''),
+    status: logStatus,
+    deliveryMode,
+    error: isCloudSuccess ? '' : (!isConfigured ? '' : (result.error || '')),
     sentBy: req.user._id,
     sentByName: req.user.name,
-    providerMessageId: result.providerMessageId || '',
+    providerMessageId: isCloudSuccess ? (result.providerMessageId || '') : `test_rem_${Date.now()}`,
   });
 
   res.status(201).json({
     success: true,
-    deliveredVia: isCloudSuccess ? 'cloud_api' : 'wa_link',
+    deliveredVia: deliveryMode,
     isCloudApi: isCloudSuccess,
+    isTestMode: !isConfigured,
     waLink,
     waMeLink,
     log,
+    notice: !isConfigured
+      ? 'Delivered in CRM Testing Mode. Add Meta Cloud API credentials in Admin Panel to route to real external numbers.'
+      : undefined,
+    warning: isCloudSuccess ? undefined : (isConfigured ? result.error : undefined),
   });
 });
 
@@ -407,6 +468,7 @@ const getConfig = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     isConfigured: Boolean(token && phoneId),
+    isTestMode: !Boolean(token && phoneId),
     phoneNumberId: phoneId,
     wabaId,
     maskedToken,

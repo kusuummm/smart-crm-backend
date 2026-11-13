@@ -44,6 +44,7 @@ const walletRoutes = require('../routes/walletRoutes');
 const telephonyRoutes = require('../routes/telephonyRoutes');
 const meetingRoutes = require('../routes/meetingRoutes');
 const applicationRoutes = require('../routes/applicationRoutes');
+const automationRoutes = require('../routes/automationRoutes');
 
 async function runApiVerification() {
   console.log('====================================================');
@@ -83,6 +84,7 @@ async function runApiVerification() {
   app.use('/api/telephony', telephonyRoutes);
   app.use('/api/meetings', meetingRoutes);
   app.use('/api/applications', applicationRoutes);
+  app.use('/api/automations', automationRoutes);
   app.use('/uploads', express.static(uploadsDir));
 
   app.use(notFound);
@@ -375,6 +377,25 @@ async function runApiVerification() {
   await test('Broadcast Campaigns API', 'CRM Modules', async () => {
     const res = await axios.get(`${baseUrl}/broadcast`, authHeader());
     return { status: res.status, detail: `${res.data.campaigns?.length || 0} campaigns` };
+  });
+
+  await test('Automations List API', 'Automations Engine', async () => {
+    const res = await axios.get(`${baseUrl}/automations`, authHeader());
+    return { status: res.status, detail: `${res.data.automations?.length || 0} automations` };
+  });
+
+  await test('Automations Execution Logs API', 'Automations Engine', async () => {
+    const res = await axios.get(`${baseUrl}/automations/logs`, authHeader());
+    return { status: res.status, detail: `${res.data.logs?.length || 0} execution logs` };
+  });
+
+  await test('Missed Call Auto-Responder & Callback Task', 'Automations Engine', async () => {
+    const res = await axios.post(
+      `${baseUrl}/automations/test-trigger`,
+      { key: 'missed_call', customerPhone: '+91 99999 88888', customerName: 'Test Automation Lead' },
+      authHeader()
+    );
+    return { status: res.status, detail: `Triggered callback notice & follow-up task` };
   });
 
   // Clean up

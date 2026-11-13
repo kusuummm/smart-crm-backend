@@ -29,10 +29,13 @@ const walletRoutes = require('./routes/walletRoutes');
 const telephonyRoutes = require('./routes/telephonyRoutes');
 const meetingRoutes = require('./routes/meetingRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
+const automationRoutes = require('./routes/automationRoutes');
+const { seedDefaultAutomations } = require('./services/automationService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 const { generalLimiter } = require('./middleware/rateLimiter');
 
 connectDB();
+seedDefaultAutomations();
 
 const app = express();
 
@@ -199,6 +202,9 @@ app.use(['/api/meetings', '/meetings'], meetingRoutes);
 
 // Applications & Documents Management
 app.use(['/api/applications', '/applications'], applicationRoutes);
+
+// Automations Engine (Missed Call Auto-responder, Follow-up Triggers)
+app.use(['/api/automations', '/automations'], automationRoutes);
 
 // Protected uploads directory - verifies authentication to guard KYC documents & certificates
 const jwt = require('jsonwebtoken');

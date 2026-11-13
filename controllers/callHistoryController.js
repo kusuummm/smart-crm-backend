@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const CallHistory = require('../models/CallHistory');
 const Customer = require('../models/Customer');
+const { handleMissedCall } = require('../services/automationService');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -100,6 +101,17 @@ const createCall = asyncHandler(async (req, res) => {
     transcript: transcript || [],
     aiSummary: aiSummary || {},
   });
+
+  // Automation #1: Trigger Missed Call Auto-Responder & Urgent Callback Task
+  if (call.status?.toLowerCase() === 'missed' || call.callType?.toLowerCase() === 'missed') {
+    handleMissedCall({
+      customerPhone: call.customerPhone,
+      customerName: call.customerName,
+      customerId: call.customerId,
+      telecallerId: call.calledBy,
+      telecallerName: call.calledByName,
+    }).catch((err) => console.warn('[Call History] Missed call automation notice:', err.message));
+  }
 
   res.status(201).json({ success: true, call });
 });

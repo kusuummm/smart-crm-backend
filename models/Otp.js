@@ -26,6 +26,7 @@ const otpSchema = new mongoose.Schema(
       phone: { type: String, default: '' },
       role: { type: String, default: 'telecaller' },
     },
+    attempts: { type: Number, default: 0 },
     expiresAt: {
       type: Date,
       required: true,

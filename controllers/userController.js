@@ -9,6 +9,9 @@ const CallHistory = require('../models/CallHistory');
 const Event = require('../models/Event');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const EmailLog = require('../models/EmailLog');
+const Wallet = require('../models/Wallet');
+const Meeting = require('../models/Meeting');
+const Application = require('../models/Application');
 
 // @desc    Create a new telecaller (or admin) account
 // @route   POST /api/users
@@ -370,6 +373,19 @@ const deleteUser = asyncHandler(async (req, res) => {
       { telecallerId: user._id },
       { $set: { telecallerId: null } }
     ),
+    FollowUp.updateMany(
+      { assignedTo: user._id },
+      { $set: { assignedTo: null, assignedToName: 'Unassigned' } }
+    ),
+    Meeting.updateMany(
+      { telecallerId: user._id },
+      { $set: { telecallerId: null, telecallerName: 'Unassigned' } }
+    ),
+    Application.updateMany(
+      { assignedTo: user._id },
+      { $set: { assignedTo: null, assignedToName: 'Unassigned' } }
+    ),
+    Wallet.deleteMany({ userId: user._id })
   ]);
 
   await user.deleteOne();

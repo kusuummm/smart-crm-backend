@@ -26,20 +26,12 @@ const globalSearch = asyncHandler(async (req, res) => {
   };
 
   let filter;
-  if (req.user.role === 'telecaller') {
-    filter = {
-      $and: [
-        searchCondition,
-        {
-          $or: [
-            { telecallerId: req.user._id },
-            { assignedTelecaller: req.user.name },
-          ],
-        },
-      ],
-    };
-  } else {
-    // Admin CANNOT access contacts assigned to callers! Admin only searches unassigned contacts.
+  const callerRole = (req.user?.role || '').toLowerCase();
+  const isAdminOrOwner = callerRole === 'admin' || callerRole === 'owner';
+  const isManager = callerRole === 'manager';
+
+  if (isAdminOrOwner) {
+    // Admin/Owner searches unassigned contacts for assignment & distribution
     filter = {
       $and: [
         searchCondition,
@@ -50,6 +42,22 @@ const globalSearch = asyncHandler(async (req, res) => {
             { assignedTelecaller: 'Unassigned' },
             { assignedTelecaller: '' },
             { assignedTelecaller: null },
+          ],
+        },
+      ],
+    };
+  } else if (isManager) {
+    // Managers can search across all contacts to supervise pipelines
+    filter = searchCondition;
+  } else {
+    // Telecaller / Staff searches contacts assigned to their account
+    filter = {
+      $and: [
+        searchCondition,
+        {
+          $or: [
+            { telecallerId: req.user._id },
+            { assignedTelecaller: req.user.name },
           ],
         },
       ],

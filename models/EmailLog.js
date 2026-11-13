@@ -50,4 +50,12 @@ emailLogSchema.pre('save', function (next) {
   next();
 });
 
+emailLogSchema.index({ to: 1, createdAt: -1 });
+emailLogSchema.index({ email: 1 });
+emailLogSchema.index({ customerId: 1, createdAt: -1 });
+emailLogSchema.index({ sentBy: 1, createdAt: -1 });
+emailLogSchema.index({ status: 1 });
+emailLogSchema.index({ type: 1 });
+emailLogSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('EmailLog', emailLogSchema);

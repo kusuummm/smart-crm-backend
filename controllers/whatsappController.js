@@ -22,7 +22,8 @@ const sendMessage = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
@@ -87,7 +88,8 @@ const sendTemplate = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
@@ -144,7 +146,8 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
@@ -193,11 +196,16 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
 // @route   GET /api/whatsapp?type=&status=&customerId=&page=&limit=
 // @access  Private
 const getLogs = asyncHandler(async (req, res) => {
-  const { type, status, customerId, page = 1, limit = 10 } = req.query;
+  const { type, status, customerId, page = 1, limit = 10, sentBy } = req.query;
   const conditions = [];
 
-  // Strict isolation: users only see WhatsApp messages they sent
-  conditions.push({ sentBy: req.user._id });
+  const callerRole = (req.user?.role || '').toLowerCase();
+  const isSupervisor = ['admin', 'owner', 'manager'].includes(callerRole);
+  if (!isSupervisor) {
+    conditions.push({ sentBy: req.user._id });
+  } else if (sentBy && sentBy !== 'all') {
+    conditions.push({ sentBy });
+  }
 
   if (type) conditions.push({ type });
   if (status) conditions.push({ status });

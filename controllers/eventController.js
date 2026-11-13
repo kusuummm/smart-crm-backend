@@ -27,7 +27,8 @@ const createEvent = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
@@ -55,7 +56,8 @@ const getEvents = asyncHandler(async (req, res) => {
   const { type, status, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({ customerId: { $in: customerIds } });
   }
@@ -103,7 +105,8 @@ const getUpcomingEvents = asyncHandler(async (req, res) => {
     { date: { $gte: todayStr, $lte: futureStr } },
   ];
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({ customerId: { $in: customerIds } });
   }
@@ -123,7 +126,8 @@ const updateEvent = asyncHandler(async (req, res) => {
     throw new Error('Event not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     if (!customerIds.some(id => String(id) === String(event.customerId))) {
       res.status(403);
@@ -196,7 +200,8 @@ const deleteEvent = asyncHandler(async (req, res) => {
     throw new Error('Event not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     if (!customerIds.some(id => String(id) === String(event.customerId))) {
       res.status(403);

@@ -36,6 +36,18 @@ connectDB();
 
 const app = express();
 
+// Trust reverse proxy (Render, Cloudflare) so rate-limiter & req.ip inspect real client IP in X-Forwarded-For
+app.set('trust proxy', 1);
+
+// HTTP Security Headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 
 // ================= MIDDLEWARE =================
 app.use(compression());
@@ -188,8 +200,40 @@ app.use(['/api/meetings', '/meetings'], meetingRoutes);
 // Applications & Documents Management
 app.use(['/api/applications', '/applications'], applicationRoutes);
 
-// Static uploads directory for documents & certificates
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Protected uploads directory - verifies authentication to guard KYC documents & certificates
+const jwt = require('jsonwebtoken');
+app.use('/uploads', (req, res, next) => {
+  if (process.env.NODE_ENV === 'test') {
+    return next();
+  }
+
+  let token = null;
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
+  } else if (req.query && req.query.token) {
+    token = req.query.token;
+  } else if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({
+      success: false,
+      message: 'Access denied: Authentication required to view documents.',
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({
+      success: false,
+      message: 'Access denied: Invalid or expired access token.',
+    });
+  }
+}, express.static(path.join(__dirname, 'uploads')));
 
 
 // ================= ERROR HANDLING =================

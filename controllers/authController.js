@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 const emailNotificationService = require('../services/emailNotificationService');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
@@ -250,7 +252,9 @@ const registerSendOtp = asyncHandler(async (req, res) => {
     throw new Error('An account with this email address already exists. Please log in.');
   }
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = crypto.randomInt(100000, 1000000).toString();
+  const salt = await bcrypt.genSalt(10);
+  const hashedPassword = await bcrypt.hash(password, salt);
 
   await Otp.deleteMany({ email: normalizedEmail, purpose: 'register' });
   await Otp.create({
@@ -259,7 +263,7 @@ const registerSendOtp = asyncHandler(async (req, res) => {
     purpose: 'register',
     metadata: {
       name: name.trim(),
-      password,
+      password: hashedPassword,
       phone: phone?.trim() || '',
       role: 'telecaller',
     },
@@ -297,16 +301,29 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
   const normalizedEmail = email.toLowerCase().trim();
   const cleanOtp = otp.toString().trim();
 
-  const otpDoc = await Otp.findOne({
+  const pendingOtp = await Otp.findOne({
     email: normalizedEmail,
     purpose: 'register',
-    otp: cleanOtp,
   });
 
-  if (!otpDoc || otpDoc.expiresAt < new Date()) {
+  if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
     res.status(400);
-    throw new Error('Invalid or expired verification code. Please request a new code.');
+    throw new Error('No active verification code found or code expired. Please request a new code.');
   }
+
+  if (pendingOtp.otp !== cleanOtp) {
+    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
+    if (pendingOtp.attempts >= 5) {
+      await Otp.deleteOne({ _id: pendingOtp._id });
+      res.status(400);
+      throw new Error('Too many invalid attempts. For your security, this verification code has been invalidated. Please request a new one.');
+    }
+    await pendingOtp.save();
+    res.status(400);
+    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+  }
+
+  const otpDoc = pendingOtp;
 
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
@@ -421,7 +438,7 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     throw new Error('Account is deactivated. Please contact an administrator.');
   }
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = crypto.randomInt(100000, 1000000).toString();
 
   await Otp.deleteMany({ email: normalizedEmail, purpose: 'forgot_password' });
   await Otp.create({
@@ -467,16 +484,29 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
   const normalizedEmail = email.toLowerCase().trim();
   const cleanOtp = otp.toString().trim();
 
-  const otpDoc = await Otp.findOne({
+  const pendingOtp = await Otp.findOne({
     email: normalizedEmail,
     purpose: 'forgot_password',
-    otp: cleanOtp,
   });
 
-  if (!otpDoc || otpDoc.expiresAt < new Date()) {
+  if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
     res.status(400);
-    throw new Error('Invalid or expired verification code');
+    throw new Error('No active reset code found or code expired. Please request a new code.');
   }
+
+  if (pendingOtp.otp !== cleanOtp) {
+    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
+    if (pendingOtp.attempts >= 5) {
+      await Otp.deleteOne({ _id: pendingOtp._id });
+      res.status(400);
+      throw new Error('Too many failed attempts. This reset code has been invalidated for security. Please request a new one.');
+    }
+    await pendingOtp.save();
+    res.status(400);
+    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+  }
+
+  const otpDoc = pendingOtp;
 
   const user = await User.findOne({ email: normalizedEmail }).select('+password');
   if (!user) {
@@ -536,7 +566,7 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
 const changePasswordSendOtp = asyncHandler(async (req, res) => {
   const normalizedEmail = req.user.email.toLowerCase().trim();
 
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = crypto.randomInt(100000, 1000000).toString();
 
   await Otp.deleteMany({ email: normalizedEmail, purpose: 'change_password' });
   await Otp.create({
@@ -582,16 +612,29 @@ const changePasswordWithOtp = asyncHandler(async (req, res) => {
   const normalizedEmail = req.user.email.toLowerCase().trim();
   const cleanOtp = otp.toString().trim();
 
-  const otpDoc = await Otp.findOne({
+  const pendingOtp = await Otp.findOne({
     email: normalizedEmail,
     purpose: 'change_password',
-    otp: cleanOtp,
   });
 
-  if (!otpDoc || otpDoc.expiresAt < new Date()) {
+  if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
     res.status(400);
-    throw new Error('Invalid or expired verification code');
+    throw new Error('No active verification code found or code expired. Please request a new code.');
   }
+
+  if (pendingOtp.otp !== cleanOtp) {
+    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
+    if (pendingOtp.attempts >= 5) {
+      await Otp.deleteOne({ _id: pendingOtp._id });
+      res.status(400);
+      throw new Error('Too many failed attempts. This code has been invalidated for security. Please request a new code.');
+    }
+    await pendingOtp.save();
+    res.status(400);
+    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+  }
+
+  const otpDoc = pendingOtp;
 
   const user = await User.findById(req.user._id).select('+password');
   if (!user) {

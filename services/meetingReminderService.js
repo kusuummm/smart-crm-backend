@@ -306,12 +306,15 @@ If you need to reschedule or have questions, please reply to this message.`;
     await WhatsAppLog.create({
       customerId: meeting.customerId,
       customerName: meeting.customerName,
+      phone: meeting.customerPhone,
       mobile: meeting.customerPhone,
       message: waText,
       type: 'meeting-reminder',
       status: waRes.success ? 'sent' : 'logged',
+      sentBy: meeting.telecallerId,
+      sentByName: meeting.telecallerName || 'Meeting Reminder Cadence',
       error: waRes.error || '',
-    }).catch(() => {});
+    }).catch((err) => console.warn('[Meeting Scheduler] WhatsApp log notice:', err.message));
   }
 
   // Record stage completion on Meeting model

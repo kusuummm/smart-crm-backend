@@ -308,6 +308,10 @@ const deleteCustomer = asyncHandler(async (req, res) => {
     Lead.deleteMany({ customerId: customer._id }),
     FollowUp.deleteMany({ customerId: customer._id }),
     CallHistory.deleteMany({ customerId: customer._id }),
+    Application.deleteMany({ customerId: customer._id }),
+    Note.deleteMany({ customerId: customer._id }),
+    WhatsAppLog.deleteMany({ customerId: customer._id }),
+    EmailLog.deleteMany({ customerId: customer._id }),
   ]);
   res.json({ success: true, message: 'Customer and associated records deleted successfully' });
 });
@@ -395,6 +399,10 @@ const bulkDeleteCustomers = asyncHandler(async (req, res) => {
     Lead.deleteMany({ customerId: { $in: matchingIds } }),
     FollowUp.deleteMany({ customerId: { $in: matchingIds } }),
     CallHistory.deleteMany({ customerId: { $in: matchingIds } }),
+    Application.deleteMany({ customerId: { $in: matchingIds } }),
+    Note.deleteMany({ customerId: { $in: matchingIds } }),
+    WhatsAppLog.deleteMany({ customerId: { $in: matchingIds } }),
+    EmailLog.deleteMany({ customerId: { $in: matchingIds } }),
   ]);
 
   res.json({

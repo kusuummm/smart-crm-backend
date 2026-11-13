@@ -70,7 +70,8 @@ const createCall = asyncHandler(async (req, res) => {
     throw new Error('customerId or customerPhone is required');
   }
 
-  if (req.user.role === 'telecaller') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned && customerId) {
@@ -196,7 +197,8 @@ const updateCall = asyncHandler(async (req, res) => {
 // @route   DELETE /api/calls/:id
 // @access  Private/Admin
 const deleteCall = asyncHandler(async (req, res) => {
-  if (req.user.role !== 'admin') {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner'].includes(callerRole)) {
     res.status(403);
     throw new Error('Only administrators can delete call history records');
   }

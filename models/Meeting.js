@@ -45,4 +45,11 @@ const meetingSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// High-performance compound indexes for scheduler queries & timeline lookups
+meetingSchema.index({ status: 1, meetingTime: 1 });
+meetingSchema.index({ customerId: 1, meetingTime: -1 });
+meetingSchema.index({ telecallerId: 1, meetingTime: -1 });
+meetingSchema.index({ date: 1, time: 1 });
+meetingSchema.index({ createdAt: -1 });
+
 module.exports = mongoose.model('Meeting', meetingSchema);

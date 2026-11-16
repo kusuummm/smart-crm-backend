@@ -84,10 +84,35 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   let deliveryResult = { success: false };
   if (isConfigured) {
-    deliveryResult = await sendWhatsAppText({
-      to: cleanPhone,
-      message: messageText,
-    });
+    if (req.body.templateName) {
+      deliveryResult = await sendWhatsAppTemplate({
+        to: cleanPhone,
+        templateName: req.body.templateName,
+        languageCode: req.body.languageCode || 'en_US',
+        params: req.body.params || [],
+      });
+    } else {
+      deliveryResult = await sendWhatsAppText({
+        to: cleanPhone,
+        message: messageText,
+      });
+
+      // If free text failed because customer hasn't messaged within Meta's 24-hour window (#131047)
+      if (!deliveryResult.success && String(deliveryResult.error || '').includes('131047')) {
+        const fallbackResult = await sendWhatsAppTemplate({
+          to: cleanPhone,
+          templateName: 'peyug_missed_call_h_v1',
+          languageCode: 'en_US',
+        });
+        if (fallbackResult.success) {
+          deliveryResult = {
+            ...fallbackResult,
+            autoTemplateFallback: true,
+            warning: 'Customer has not messaged in the last 24 hours. Delivered approved PeYug template to customer phone.',
+          };
+        }
+      }
+    }
   }
 
   const isCloudSuccess = Boolean(deliveryResult.success);

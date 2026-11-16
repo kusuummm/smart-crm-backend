@@ -1,12 +1,20 @@
+const mongoose = require('mongoose');
 const axios = require('axios');
 
 let cachedDbConfig = null;
 
+const DEFAULT_PHONE_ID = '1408768628982301';
+const DEFAULT_WABA_ID = '1604281820561116';
+
 const loadDbConfig = async () => {
   if (cachedDbConfig !== null) return cachedDbConfig;
   try {
+    if (mongoose.connection.readyState !== 1) {
+      cachedDbConfig = {};
+      return cachedDbConfig;
+    }
     const SystemConfig = require('../models/SystemConfig');
-    const doc = await SystemConfig.findOne({ key: 'whatsapp_config' });
+    const doc = await SystemConfig.findOne({ key: 'whatsapp_config' }).maxTimeMS(2000);
     if (doc?.value) {
       cachedDbConfig = doc.value;
       if (cachedDbConfig.accessToken && !process.env.WHATSAPP_ACCESS_TOKEN) {
@@ -31,8 +39,8 @@ const setRuntimeWhatsAppConfig = (cfg) => {
   if (cfg.wabaId) process.env.WHATSAPP_WABA_ID = cfg.wabaId;
 };
 
-const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || cachedDbConfig?.accessToken;
-const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || cachedDbConfig?.phoneNumberId;
+const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || cachedDbConfig?.accessToken || '';
+const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || cachedDbConfig?.phoneNumberId || DEFAULT_PHONE_ID;
 
 /**
  * Verify Meta Cloud API connection directly with Graph API

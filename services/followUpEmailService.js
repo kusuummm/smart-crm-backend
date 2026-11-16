@@ -2,6 +2,7 @@ const sendEmail = require('../utils/sendEmail');
 const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
+const whatsAppNotificationService = require('./whatsAppNotificationService');
 
 const STATUS_LABELS = {
   'new': 'New Follow-up',
@@ -305,6 +306,14 @@ const sendFollowUpStatusChangeEmails = async ({ lead, newStatus, remark, updated
       console.log(`[FollowUp Email] No valid email for telecaller (${telecaller?.name || 'Unassigned'}); skipping telecaller email.`);
     }
 
+    // 5. Also dispatch companion WhatsApp notification to Customer
+    whatsAppNotificationService.sendFollowUpStatusChangeWhatsApp({
+      lead: { customerId: customer, _id: lead._id },
+      newStatus,
+      remark,
+      updatedByUser: telecaller || updatedByUser,
+    }).catch((waErr) => console.warn('[FollowUp WhatsApp Error]:', waErr.message));
+
     return { customerSent, telecallerSent };
   } catch (error) {
     console.error('[FollowUp Email] Error dispatching follow-up emails:', error);
@@ -375,6 +384,15 @@ const sendFollowUpScheduleEmails = async ({ followUp, actionType = 'scheduled', 
 
       await sendEmail({ to: telecaller.email, subject, html });
     }
+
+    // 3. Also dispatch companion WhatsApp Notification to Customer
+    whatsAppNotificationService.sendFollowUpScheduleWhatsApp({
+      customer,
+      telecaller,
+      followUp,
+      actionType,
+      updatedByUser,
+    }).catch((waErr) => console.warn('[FollowUp Schedule WhatsApp Error]:', waErr.message));
   } catch (err) {
     console.error('[FollowUp Schedule Email] Error:', err.message);
   }
@@ -725,6 +743,14 @@ const sendNewCustomerLeadEmails = async ({ customer, lead, updatedByUser, remark
     } else {
       console.log(`[New Customer Lead Email] Lead owner has no valid email; skipped lead owner email.`);
     }
+
+    // Also dispatch companion WhatsApp Notification to Customer
+    whatsAppNotificationService.sendNewCustomerLeadWhatsApp({
+      customer: custDoc,
+      leadOwner,
+      status: leadStatus,
+      remark,
+    }).catch((waErr) => console.warn('[New Customer Lead WhatsApp Error]:', waErr.message));
 
     return { customerSent, leadOwnerSent };
   } catch (error) {

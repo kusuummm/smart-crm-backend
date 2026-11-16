@@ -1,4 +1,5 @@
 const emailNotificationService = require('../services/emailNotificationService');
+const whatsAppNotificationService = require('../services/whatsAppNotificationService');
 const asyncHandler = require('express-async-handler');
 const path = require('path');
 const fs = require('fs');
@@ -210,6 +211,17 @@ const createApplication = asyncHandler(async (req, res) => {
     remarks,
   }).catch((err) => console.warn('[Email Error] Application Submitted:', err.message));
 
+  // Automatic WhatsApp: Application Submitted
+  whatsAppNotificationService.sendApplicationSubmittedWhatsApp({
+    customerId: customer._id,
+    customerName: customer.name,
+    customerPhone: customer.mobile || customer.phone || application.customerMobile,
+    applicationNumber: application.applicationNumber,
+    applicationType: application.applicationType,
+    feeAmount: application.paymentAmount,
+    paymentStatus: application.paymentStatus,
+  }).catch((err) => console.warn('[WhatsApp Error] Application Submitted:', err.message));
+
   if (application.paymentStatus === 'completed') {
     emailNotificationService.sendPaymentConfirmationEmail({
       customerId: customer._id,
@@ -220,6 +232,16 @@ const createApplication = asyncHandler(async (req, res) => {
       paymentReference: application.paymentReference,
       paymentDate: new Date(),
     }).catch((err) => console.warn('[Email Error] Payment Confirmation:', err.message));
+
+    whatsAppNotificationService.sendPaymentConfirmationWhatsApp({
+      customerId: customer._id,
+      customerName: customer.name,
+      customerPhone: customer.mobile || customer.phone || application.customerMobile,
+      applicationNumber: application.applicationNumber,
+      paymentAmount: application.paymentAmount,
+      paymentReference: application.paymentReference,
+      paymentDate: new Date(),
+    }).catch((err) => console.warn('[WhatsApp Error] Payment Confirmation:', err.message));
   }
 
   res.status(201).json({
@@ -283,6 +305,17 @@ const updateStatus = asyncHandler(async (req, res) => {
     remarks: rejectionReason || resubmissionNotes || remarks,
   }).catch((err) => console.warn('[Email Error] Status Update:', err.message));
 
+  // Automatic WhatsApp: Application Status Update
+  whatsAppNotificationService.sendApplicationStatusUpdateWhatsApp({
+    customerId: application.customerId,
+    customerName: application.customerName,
+    customerPhone: application.customerMobile,
+    applicationNumber: application.applicationNumber,
+    oldStatus: prevStatus,
+    newStatus: status,
+    remarks: rejectionReason || resubmissionNotes || remarks,
+  }).catch((err) => console.warn('[WhatsApp Error] Status Update:', err.message));
+
   if (status === 'pending_documents' || status === 'resubmission_required') {
     emailNotificationService.sendDocumentsPendingEmail({
       customerId: application.customerId,
@@ -291,6 +324,14 @@ const updateStatus = asyncHandler(async (req, res) => {
       applicationNumber: application.applicationNumber,
       resubmissionNotes: rejectionReason || resubmissionNotes,
     }).catch((err) => console.warn('[Email Error] Documents Pending:', err.message));
+
+    whatsAppNotificationService.sendDocumentsPendingWhatsApp({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerPhone: application.customerMobile,
+      applicationNumber: application.applicationNumber,
+      resubmissionNotes: rejectionReason || resubmissionNotes,
+    }).catch((err) => console.warn('[WhatsApp Error] Documents Pending:', err.message));
   }
 
   res.json({
@@ -341,6 +382,16 @@ const updatePayment = asyncHandler(async (req, res) => {
       paymentReference: application.paymentReference,
       paymentDate: application.paymentDate || new Date(),
     }).catch((err) => console.warn('[Email Error] Payment Confirmation:', err.message));
+
+    whatsAppNotificationService.sendPaymentConfirmationWhatsApp({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerPhone: application.customerMobile,
+      applicationNumber: application.applicationNumber,
+      paymentAmount: application.paymentAmount,
+      paymentReference: application.paymentReference,
+      paymentDate: application.paymentDate || new Date(),
+    }).catch((err) => console.warn('[WhatsApp Error] Payment Confirmation:', err.message));
   }
 
   res.json({
@@ -460,6 +511,14 @@ const updateDocumentStatus = asyncHandler(async (req, res) => {
       applicationNumber: application.applicationNumber,
       documentName: doc.name,
     }).catch((err) => console.warn('[Email Error] Documents Approved:', err.message));
+
+    whatsAppNotificationService.sendDocumentsApprovedWhatsApp({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerPhone: application.customerMobile,
+      applicationNumber: application.applicationNumber,
+      documentName: doc.name,
+    }).catch((err) => console.warn('[WhatsApp Error] Documents Approved:', err.message));
   } else if (status === 'resubmission_required' || status === 'rejected') {
     emailNotificationService.sendDocumentsPendingEmail({
       customerId: application.customerId,
@@ -469,6 +528,15 @@ const updateDocumentStatus = asyncHandler(async (req, res) => {
       missingDocuments: [doc.name],
       resubmissionNotes: remarks,
     }).catch((err) => console.warn('[Email Error] Document Resubmit:', err.message));
+
+    whatsAppNotificationService.sendDocumentsPendingWhatsApp({
+      customerId: application.customerId,
+      customerName: application.customerName,
+      customerPhone: application.customerMobile,
+      applicationNumber: application.applicationNumber,
+      missingDocuments: [doc.name],
+      resubmissionNotes: remarks,
+    }).catch((err) => console.warn('[WhatsApp Error] Document Resubmit:', err.message));
   }
 
   res.json({
@@ -589,6 +657,17 @@ const uploadCertificate = asyncHandler(async (req, res) => {
     certificateTitle: title,
     downloadUrl: application.finalCertificate.fileUrl,
   }).catch((err) => console.warn('[Email Error] Registration Completed:', err.message));
+
+  // Automatic WhatsApp: Registration Completed & Final Certificate Ready
+  whatsAppNotificationService.sendRegistrationCompletedWhatsApp({
+    customerId: application.customerId,
+    customerName: application.customerName,
+    customerPhone: application.customerMobile,
+    applicationNumber: application.applicationNumber,
+    certificateNumber: certNum,
+    certificateTitle: title,
+    downloadUrl: application.finalCertificate.fileUrl,
+  }).catch((err) => console.warn('[WhatsApp Error] Registration Completed:', err.message));
 
   res.status(201).json({
     success: true,

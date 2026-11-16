@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const emailNotificationService = require('../services/emailNotificationService');
+const whatsAppNotificationService = require('../services/whatsAppNotificationService');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const Wallet = require('../models/Wallet');
@@ -276,6 +277,14 @@ const registerSendOtp = asyncHandler(async (req, res) => {
     otp,
   });
 
+  if (phone && phone.trim()) {
+    whatsAppNotificationService.sendVerificationWhatsApp({
+      recipientPhone: phone.trim(),
+      recipientName: name,
+      otp,
+    }).catch((waErr) => console.warn('[Auth Register WhatsApp OTP Notice]:', waErr.message));
+  }
+
   if (!mailResult.success) {
     res.status(502);
     throw new Error(`Failed to dispatch verification email: ${mailResult.error}`);
@@ -454,6 +463,14 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     otp,
   });
 
+  if (user.phone && user.phone.trim()) {
+    whatsAppNotificationService.sendPasswordResetWhatsApp({
+      recipientPhone: user.phone.trim(),
+      recipientName: user.name,
+      otp,
+    }).catch((waErr) => console.warn('[Auth Forgot Password WhatsApp OTP Notice]:', waErr.message));
+  }
+
   if (!mailResult.success) {
     res.status(502);
     throw new Error(`Failed to dispatch reset code: ${mailResult.error}`);
@@ -581,6 +598,14 @@ const changePasswordSendOtp = asyncHandler(async (req, res) => {
     otp,
     purpose: 'change_password',
   });
+
+  if (req.user.phone && req.user.phone.trim()) {
+    whatsAppNotificationService.sendVerificationWhatsApp({
+      recipientPhone: req.user.phone.trim(),
+      recipientName: req.user.name,
+      otp,
+    }).catch((waErr) => console.warn('[Auth Change Password WhatsApp OTP Notice]:', waErr.message));
+  }
 
   if (!mailResult.success) {
     res.status(502);

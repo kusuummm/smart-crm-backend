@@ -65,8 +65,13 @@ app.use(
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
 
+      let hostname = '';
+      try { hostname = new URL(origin).hostname; } catch(_) {}
       const isAllowed =
         allowedOrigins.includes(origin) ||
+        hostname.endsWith('.onrender.com') ||
+        hostname === 'localhost' ||
+        hostname === '127.0.0.1' ||
         /^http:\/\/localhost:\d+$/.test(origin) ||
         /^http:\/\/127\.0\.0\.1:\d+$/.test(origin);
       if (isAllowed) return callback(null, true);

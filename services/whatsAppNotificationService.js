@@ -76,10 +76,15 @@ async function dispatchAndLog({
 
       // If free text failed because customer hasn't messaged within Meta's 24-hour window (#131047)
       if (!deliveryResult.success && String(deliveryResult.error || '').includes('131047')) {
-        console.log(`[WhatsApp Notification] 24h window closed for ${cleanTo}. Falling back to approved PeYug template.`);
+        console.log(`[WhatsApp Notification] 24h window closed for ${cleanTo}. Falling back to approved PeYug template for type: ${type}`);
+        let fallbackTpl = 'welcome_to_peyug';
+        if (type === 'payment' || type === 'billing') fallbackTpl = 'peyug_emi_reminder_h_v1';
+        else if (type === 'documents' || type === 'kyc') fallbackTpl = 'peyug_account_activate_h_v1';
+        else if (type === 'lead' || type === 'follow-up') fallbackTpl = 'peyug_daily_deposit_h_v1';
+
         const fallbackResult = await sendWhatsAppTemplate({
           to: cleanTo,
-          templateName: 'peyug_missed_call_h_v1',
+          templateName: fallbackTpl,
           languageCode: 'en_US',
         });
         if (fallbackResult.success) {

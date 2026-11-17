@@ -134,6 +134,74 @@ const BASE_URL = () => {
   return `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || 'v23.0'}/${phoneId}/messages`;
 };
 
+// Known text-only templates on PeYug WABA (do not expect a header image)
+const TEXT_ONLY_TEMPLATES = new Set([
+  'peyug_about',
+  'peyug_anouncement_upi_',
+  'hello_world',
+]);
+
+const DEFAULT_BANNER_IMAGE = 'https://images.unsplash.com/photo-1556742049-0a67c5574f73?w=800';
+
+const PEYUG_OFFICIAL_TEMPLATES = [
+  {
+    name: 'welcome_to_peyug',
+    label: 'Welcome to PeYug',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Official welcome message with Android/iOS app links',
+  },
+  {
+    name: 'peyug_daily_deposit_h_v1',
+    label: 'डेली डिपॉज़िट सेवा',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Daily savings and deposit options (₹100, ₹200, ₹500)',
+  },
+  {
+    name: 'peyug_emergency_loan_h_v1',
+    label: 'इमरजेंसी लोन सहायता',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Personal, business, medical and emergency loan support',
+  },
+  {
+    name: 'peyug_emi_reminder_h_v1',
+    label: 'EMI / भुगतान रिमाइंडर',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Polite reminder that payment / EMI due date is near',
+  },
+  {
+    name: 'peyug_account_activate_h_v1',
+    label: 'Account Activate',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Prompts customer to activate account with "START"',
+  },
+  {
+    name: 'peyug_security_trust_h_v1',
+    label: 'सुरक्षा & विश्वास',
+    category: 'MARKETING',
+    hasImage: true,
+    description: 'Trust message highlighting fund security and digital records',
+  },
+  {
+    name: 'peyug_about',
+    label: 'PeYug Refer & Earn',
+    category: 'MARKETING',
+    hasImage: false,
+    description: 'Refer & Earn ₹100 Cashback + 1% monthly commission',
+  },
+  {
+    name: 'peyug_anouncement_upi_',
+    label: 'UPI Launch Announcement',
+    category: 'MARKETING',
+    hasImage: false,
+    description: 'Announcement about PeYug UPI payment ecosystem',
+  },
+];
+
 // Sends a free-form text message. Only works within Meta's 24-hour customer
 // service window (i.e. after the customer has messaged you recently).
 // For the first outbound message to a customer, use sendWhatsAppTemplate instead.
@@ -180,9 +248,14 @@ const sendWhatsAppText = async ({ to, message, text }) => {
       waMeLink: getWaMeLink(cleanTo, messageBody),
     };
   } catch (error) {
+    const errorMsg = error.response?.data?.error?.message || error.message;
+    const is24hWindowClosed = Boolean(
+      String(errorMsg).includes('131047') || error.response?.data?.error?.code === 131047
+    );
     return {
       success: false,
-      error: error.response?.data?.error?.message || error.message,
+      is24hWindowClosed,
+      error: errorMsg,
       cleanTo,
       waLink: getWhatsAppWebLink(cleanTo, messageBody),
       waMeLink: getWaMeLink(cleanTo, messageBody),
@@ -192,9 +265,14 @@ const sendWhatsAppText = async ({ to, message, text }) => {
 
 // Sends a pre-approved template message (required for the first message to a
 // customer, or after the 24-hour session window has closed).
-// `templateName` must match a template already approved in Meta Business Manager.
-// `params` is an array of strings filled into the template's {{1}}, {{2}}, etc.
-const sendWhatsAppTemplate = async ({ to, templateName = 'hello_world', languageCode = 'en_US', params = [] }) => {
+// Automatically attaches approved header images when required by the template.
+const sendWhatsAppTemplate = async ({
+  to,
+  templateName = 'peyug_about',
+  languageCode = 'en_US',
+  params = [],
+  headerImageUrl = null,
+}) => {
   const token = getToken();
   const phoneId = getPhoneId();
   const cleanTo = cleanPhoneNumber(to);
@@ -214,6 +292,29 @@ const sendWhatsAppTemplate = async ({ to, templateName = 'hello_world', language
   }
 
   try {
+    const isTextOnly = TEXT_ONLY_TEMPLATES.has(templateName);
+    const components = [];
+
+    // Most PeYug approved templates have an IMAGE header
+    if (!isTextOnly) {
+      components.push({
+        type: 'header',
+        parameters: [
+          {
+            type: 'image',
+            image: { link: headerImageUrl || DEFAULT_BANNER_IMAGE },
+          },
+        ],
+      });
+    }
+
+    if (params && params.length > 0) {
+      components.push({
+        type: 'body',
+        parameters: params.map((text) => ({ type: 'text', text: String(text) })),
+      });
+    }
+
     const { data } = await axios.post(
       BASE_URL(),
       {
@@ -223,9 +324,7 @@ const sendWhatsAppTemplate = async ({ to, templateName = 'hello_world', language
         template: {
           name: templateName,
           language: { code: languageCode },
-          components: params.length
-            ? [{ type: 'body', parameters: params.map((text) => ({ type: 'text', text })) }]
-            : [],
+          ...(components.length > 0 ? { components } : {}),
         },
       },
       { headers: { Authorization: `Bearer ${token}` } }
@@ -234,6 +333,7 @@ const sendWhatsAppTemplate = async ({ to, templateName = 'hello_world', language
       success: true,
       providerMessageId: data.messages?.[0]?.id,
       cleanTo,
+      templateName,
       waLink: getWhatsAppWebLink(cleanTo),
       waMeLink: getWaMeLink(cleanTo),
     };
@@ -242,6 +342,7 @@ const sendWhatsAppTemplate = async ({ to, templateName = 'hello_world', language
       success: false,
       error: error.response?.data?.error?.message || error.message,
       cleanTo,
+      templateName,
       waLink: getWhatsAppWebLink(cleanTo),
       waMeLink: getWaMeLink(cleanTo),
     };
@@ -259,5 +360,7 @@ module.exports = {
   verifyMetaConnection,
   getToken,
   getPhoneId,
+  PEYUG_OFFICIAL_TEMPLATES,
+  DEFAULT_BANNER_IMAGE,
 };
 

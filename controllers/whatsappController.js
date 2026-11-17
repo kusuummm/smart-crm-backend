@@ -14,6 +14,7 @@ const {
   getPhoneId,
   setRuntimeWhatsAppConfig,
   verifyMetaConnection,
+  PEYUG_OFFICIAL_TEMPLATES,
 } = require('../utils/sendWhatsApp');
 
 const getTelecallerCustomerIds = async (user) => {
@@ -96,29 +97,15 @@ const sendMessage = asyncHandler(async (req, res) => {
         to: cleanPhone,
         message: messageText,
       });
-
-      // If free text failed because customer hasn't messaged within Meta's 24-hour window (#131047)
-      if (!deliveryResult.success && String(deliveryResult.error || '').includes('131047')) {
-        const fallbackResult = await sendWhatsAppTemplate({
-          to: cleanPhone,
-          templateName: 'peyug_missed_call_h_v1',
-          languageCode: 'en_US',
-        });
-        if (fallbackResult.success) {
-          deliveryResult = {
-            ...fallbackResult,
-            autoTemplateFallback: true,
-            warning: 'Customer has not messaged in the last 24 hours. Delivered approved PeYug template to customer phone.',
-          };
-        }
-      }
     }
   }
 
   const isCloudSuccess = Boolean(deliveryResult.success);
-  // If Cloud API configured and sent: 'cloud_api'
-  // If not configured: 'test_mode' (allows in-CRM test sending without tokens)
-  // If configured but returned error: 'cloud_api' with error
+  const is24hClosed = Boolean(
+    deliveryResult.is24hWindowClosed ||
+      String(deliveryResult.error || '').includes('131047')
+  );
+
   const deliveryMode = isCloudSuccess
     ? 'cloud_api'
     : (!isConfigured ? 'test_mode' : 'cloud_api');
@@ -143,14 +130,17 @@ const sendMessage = asyncHandler(async (req, res) => {
     sentByName: req.user.name,
     providerMessageId: isCloudSuccess
       ? (deliveryResult.providerMessageId || '')
-      : `test_msg_${Date.now()}`,
+      : `failed_${Date.now()}`,
   });
 
-  res.status(201).json({
-    success: true,
+  const statusCode = isCloudSuccess || !isConfigured ? 201 : 200;
+
+  res.status(statusCode).json({
+    success: isCloudSuccess || !isConfigured,
     deliveredVia: deliveryMode,
     isCloudApi: isCloudSuccess,
     isTestMode: !isConfigured,
+    is24hWindowClosed: is24hClosed,
     waLink,
     waMeLink,
     message: messageText,
@@ -159,10 +149,10 @@ const sendMessage = asyncHandler(async (req, res) => {
       name: recipientName,
       phone: cleanPhone,
     },
-    notice: !isConfigured
-      ? 'Delivered in CRM Testing Mode. Tokens can be added later in Admin Panel to route to real external numbers.'
-      : undefined,
-    warning: isCloudSuccess ? undefined : (isConfigured ? deliveryResult.error : undefined),
+    error: isCloudSuccess ? undefined : (isConfigured ? deliveryResult.error : undefined),
+    warning: is24hClosed
+      ? 'Customer has not messaged in the last 24 hours (Meta Policy #131047). Free text cannot be delivered until customer replies. Use an approved PeYug template below or click "Send via WhatsApp Web".'
+      : (isCloudSuccess ? undefined : deliveryResult.error),
     log,
   });
 });
@@ -499,6 +489,7 @@ const getConfig = asyncHandler(async (req, res) => {
     maskedToken,
     hasToken: Boolean(token),
     webhookUrl: '/api/whatsapp/webhook',
+    templates: PEYUG_OFFICIAL_TEMPLATES,
   });
 });
 

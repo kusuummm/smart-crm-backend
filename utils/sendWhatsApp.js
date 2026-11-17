@@ -141,7 +141,7 @@ const TEXT_ONLY_TEMPLATES = new Set([
   'hello_world',
 ]);
 
-const DEFAULT_BANNER_IMAGE = 'https://images.unsplash.com/photo-1556742049-0a67c5574f73?w=800';
+const DEFAULT_BANNER_IMAGE = 'https://peyug.in/assets/images/banner/PeYug.png';
 
 const PEYUG_OFFICIAL_TEMPLATES = [
   {

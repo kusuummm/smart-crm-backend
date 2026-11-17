@@ -723,7 +723,7 @@ const createMetaTemplate = asyncHandler(async (req, res) => {
       type: 'HEADER',
       format: 'IMAGE',
       example: {
-        header_handle: ['https://images.unsplash.com/photo-1556742049-0a67c5574f73?w=800'],
+        header_handle: ['https://peyug.in/assets/images/banner/PeYug.png'],
       },
     });
   }

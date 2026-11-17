@@ -3,7 +3,7 @@ const Meeting = require('../models/Meeting');
 const EmailLog = require('../models/EmailLog');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const sendEmail = require('../utils/sendEmail');
-const { sendWhatsAppText } = require('../utils/sendWhatsApp');
+const { sendWhatsAppText, sendWhatsAppTemplate } = require('../utils/sendWhatsApp');
 
 // The 6 Cadence Stages:
 // Stage 1: 3 hours prior (T - 180m)
@@ -294,10 +294,26 @@ ${meeting.meetingLink ? `👉 Join Meeting: ${meeting.meetingLink}` : '📞 Your
 
 If you need to reschedule or have questions, please reply to this message.`;
 
-    const waRes = await sendWhatsAppText({
+    let waRes = await sendWhatsAppText({
       to: meeting.customerPhone,
       message: waText,
     });
+
+    let deliveredText = waText;
+    let templateUsed = '';
+
+    if (!waRes.success && (waRes.is24hWindowClosed || String(waRes.error || '').includes('131047'))) {
+      const tplRes = await sendWhatsAppTemplate({
+        to: meeting.customerPhone,
+        templateName: 'peyug_emi_reminder_h_v1',
+        languageCode: 'en_US',
+      });
+      if (tplRes.success) {
+        waRes = tplRes;
+        deliveredText = tplRes.bodyText || waText;
+        templateUsed = 'peyug_emi_reminder_h_v1';
+      }
+    }
 
     if (waRes.success) {
       whatsappSent = true;
@@ -308,11 +324,13 @@ If you need to reschedule or have questions, please reply to this message.`;
       customerName: meeting.customerName,
       phone: meeting.customerPhone,
       mobile: meeting.customerPhone,
-      message: waText,
+      message: deliveredText,
       type: 'meeting-reminder',
+      templateName: templateUsed,
       status: waRes.success ? 'sent' : 'logged',
       sentBy: meeting.telecallerId,
       sentByName: meeting.telecallerName || 'Meeting Reminder Cadence',
+      providerMessageId: waRes.providerMessageId || '',
       error: waRes.error || '',
     }).catch((err) => console.warn('[Meeting Scheduler] WhatsApp log notice:', err.message));
   }

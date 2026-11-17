@@ -3,7 +3,7 @@ const AutomationLog = require('../models/AutomationLog');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const FollowUp = require('../models/FollowUp');
 const Customer = require('../models/Customer');
-const { sendWhatsAppText } = require('../utils/sendWhatsApp');
+const { sendWhatsAppText, sendWhatsAppTemplate } = require('../utils/sendWhatsApp');
 
 // Default initial system automations
 const DEFAULT_AUTOMATIONS = [
@@ -79,13 +79,31 @@ const handleMissedCall = async ({
       messageBody = messageBody.replace(/{name}/g, effectiveCustomerName);
     }
 
-    // 1. Send WhatsApp message to customer
+    // 1. Send WhatsApp message to customer (attempts text, falls back to approved PeYug template)
     let waResult = { success: false, error: 'Provider not initialized' };
+    let deliveredMessage = messageBody;
+    let templateUsed = '';
+
     try {
       waResult = await sendWhatsAppText({
         to: customerPhone,
         text: messageBody,
       });
+
+      // If customer is outside 24h window (Meta #131047), dispatch approved PeYug missed call template
+      if (!waResult.success && (waResult.is24hWindowClosed || String(waResult.error || '').includes('131047'))) {
+        console.log(`[Automation Engine] 24h window closed for ${customerPhone}. Dispatching approved peyug_missed_call_h_v1 template.`);
+        const tplResult = await sendWhatsAppTemplate({
+          to: customerPhone,
+          templateName: 'peyug_missed_call_h_v1',
+          languageCode: 'en_US',
+        });
+        if (tplResult.success) {
+          waResult = tplResult;
+          templateUsed = 'peyug_missed_call_h_v1';
+          deliveredMessage = tplResult.bodyText || messageBody;
+        }
+      }
     } catch (sendErr) {
       waResult = { success: false, error: sendErr.message };
     }
@@ -97,11 +115,13 @@ const handleMissedCall = async ({
         customerName: effectiveCustomerName,
         phone: customerPhone,
         mobile: customerPhone,
-        message: messageBody,
+        message: deliveredMessage,
         type: 'system',
+        templateName: templateUsed,
         status: waResult.success ? 'sent' : 'logged',
         sentBy: effectiveTelecallerId,
         sentByName: 'Missed Call Automation',
+        providerMessageId: waResult.providerMessageId || '',
         error: waResult.error || '',
       }).catch(() => {});
     }

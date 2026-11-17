@@ -419,16 +419,27 @@ const getLogs = asyncHandler(async (req, res) => {
 // @desc    Webhook Verify (GET /api/whatsapp/webhook)
 // @route   GET /api/whatsapp/webhook
 // @access  Public
-const verifyWebhook = (req, res) => {
+const verifyWebhook = async (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  const expectedToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
-  if (mode === 'subscribe' && token && token === expectedToken) {
+  await loadDbConfig();
+  const validTokens = new Set(
+    [
+      'peyug_crm_webhook_verify_sec_948f21',
+      process.env.WHATSAPP_VERIFY_TOKEN,
+      process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN,
+      cachedDbConfig?.verifyToken,
+    ].filter(Boolean)
+  );
+
+  if (mode === 'subscribe' && token && validTokens.has(token)) {
+    console.log('[Meta WhatsApp Webhook] Challenge verified successfully');
     return res.status(200).send(challenge);
   }
 
+  console.warn('[Meta WhatsApp Webhook] Verification rejected. Token received:', token);
   res.sendStatus(403);
 };
 
@@ -475,10 +486,57 @@ const receiveWebhook = (req, res) => {
           const statuses = value.statuses || [];
           for (const statusUpdate of statuses) {
             if (statusUpdate.id) {
+              const updateData = { status: statusUpdate.status };
+              if (statusUpdate.errors && statusUpdate.errors.length > 0) {
+                const errDetails = statusUpdate.errors
+                  .map((e) => `${e.title || e.message || 'Error'} (code ${e.code})`)
+                  .join('; ');
+                updateData.error = errDetails;
+                console.warn(
+                  `[Meta WhatsApp Webhook] Message ${statusUpdate.id} status=${statusUpdate.status} error=${errDetails}`
+                );
+              }
               await WhatsAppLog.findOneAndUpdate(
                 { providerMessageId: statusUpdate.id },
-                { status: statusUpdate.status }
+                { $set: updateData }
               );
+            }
+          }
+
+          // Inbound messages from customers
+          const messages = value.messages || [];
+          for (const inMsg of messages) {
+            try {
+              const fromPhone = inMsg.from; // e.g. '919251177886'
+              const textBody =
+                inMsg.text?.body ||
+                (inMsg.button?.text ? `[Button: ${inMsg.button.text}]` : '[Media/Interactive]');
+              const cleanDigits = String(fromPhone).slice(-10);
+
+              const customer = await Customer.findOne({
+                $or: [
+                  { mobile: new RegExp(cleanDigits) },
+                  { phone: new RegExp(cleanDigits) },
+                ],
+              });
+
+              await WhatsAppLog.create({
+                customerId: customer?._id || undefined,
+                customerName:
+                  customer?.name ||
+                  value.contacts?.[0]?.profile?.name ||
+                  `Customer (+${fromPhone})`,
+                phone: fromPhone,
+                mobile: fromPhone,
+                message: textBody,
+                type: 'custom',
+                status: 'read',
+                deliveryMode: 'cloud_api',
+                providerMessageId: inMsg.id,
+                sentByName: customer?.name || 'Customer (Inbound)',
+              });
+            } catch (inErr) {
+              console.error('Error logging inbound WhatsApp message:', inErr.message);
             }
           }
 

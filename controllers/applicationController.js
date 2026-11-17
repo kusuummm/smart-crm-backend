@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const Application = require('../models/Application');
 const Customer = require('../models/Customer');
+const Lead = require('../models/Lead');
 
 // Helper to generate application number
 const generateApplicationNumber = async () => {
@@ -20,6 +21,7 @@ const generateApplicationNumber = async () => {
 const getStats = asyncHandler(async (req, res) => {
   const [
     totalCustomers,
+    totalLeads,
     totalApplications,
     newApplications,
     pendingDocuments,
@@ -31,6 +33,7 @@ const getStats = asyncHandler(async (req, res) => {
     paymentCompleted,
   ] = await Promise.all([
     Customer.countDocuments(),
+    Lead.countDocuments().catch(() => 0),
     Application.countDocuments(),
     Application.countDocuments({ status: 'new' }),
     Application.countDocuments({ status: 'pending_documents' }),
@@ -46,6 +49,8 @@ const getStats = asyncHandler(async (req, res) => {
     success: true,
     stats: {
       totalCustomers,
+      totalUsers: totalCustomers,
+      totalLeads: totalLeads || 0,
       totalApplications,
       newApplications,
       pendingDocuments,

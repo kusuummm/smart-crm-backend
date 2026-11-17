@@ -39,8 +39,8 @@ const setRuntimeWhatsAppConfig = (cfg) => {
   if (cfg.wabaId) process.env.WHATSAPP_WABA_ID = cfg.wabaId;
 };
 
-const getToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || cachedDbConfig?.accessToken || '';
-const getPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || cachedDbConfig?.phoneNumberId || DEFAULT_PHONE_ID;
+const getToken = () => cachedDbConfig?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
+const getPhoneId = () => cachedDbConfig?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || DEFAULT_PHONE_ID;
 
 /**
  * Verify Meta Cloud API connection directly with Graph API

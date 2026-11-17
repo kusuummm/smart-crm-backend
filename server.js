@@ -96,8 +96,13 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Global API rate limiter (600 requests / minute)
-app.use('/api', generalLimiter);
+// Global API rate limiter (exempt webhooks from rate limiting)
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/whatsapp/webhook') || req.path.startsWith('/telephony/webhook')) {
+    return next();
+  }
+  return generalLimiter(req, res, next);
+});
 
 
 // ================= HEALTH CHECK & NETWORK DIAGNOSTIC =================

@@ -718,6 +718,18 @@ const getConfig = asyncHandler(async (req, res) => {
     ? `${token.substring(0, 6)}••••••••${token.substring(token.length - 4)}`
     : (token ? '••••••••' : '');
 
+  let verifiedName = '';
+  let displayPhoneNumber = '';
+  if (token && phoneId) {
+    try {
+      const ver = await verifyMetaConnection(token, phoneId);
+      if (ver.connected) {
+        verifiedName = ver.verifiedName || '';
+        displayPhoneNumber = ver.displayPhoneNumber || '';
+      }
+    } catch (_) {}
+  }
+
   res.json({
     success: true,
     isConfigured: Boolean(token && phoneId),
@@ -726,6 +738,8 @@ const getConfig = asyncHandler(async (req, res) => {
     wabaId,
     maskedToken,
     hasToken: Boolean(token),
+    verifiedName,
+    displayPhoneNumber,
     webhookUrl: '/api/whatsapp/webhook',
     templates: PEYUG_OFFICIAL_TEMPLATES,
   });

@@ -10,6 +10,8 @@ const {
   getConfig,
   updateConfig,
   testConnection,
+  getLiveTemplates,
+  createMetaTemplate,
 } = require('../controllers/whatsappController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -25,8 +27,12 @@ router.post('/send-template', sendTemplate);
 router.post('/send-followup-reminder', sendFollowUpReminder);
 router.get('/', getLogs);
 
+// WhatsApp Templates Management
+router.get('/templates', getLiveTemplates);
+router.post('/templates', authorize('admin'), createMetaTemplate);
+
 // WhatsApp Configuration & Diagnostics
-router.get('/config', authorize('manager'), getConfig);
+router.get('/config', getConfig);
 router.put('/config', authorize('admin'), updateConfig);
 router.post('/test-connection', authorize('admin'), testConnection);
 

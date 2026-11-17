@@ -50,6 +50,8 @@ const whatsAppLogSchema = new mongoose.Schema(
     sentBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     sentByName: { type: String, default: 'System Automated' },
     providerMessageId: { type: String, default: '' }, // Meta WhatsApp message id for delivery tracking
+    templateName: { type: String, default: '' },
+    headerImageUrl: { type: String, default: '' },
   },
   { timestamps: true }
 );

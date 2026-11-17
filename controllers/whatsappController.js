@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const axios = require('axios');
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const WhatsAppLog = require('../models/WhatsAppLog');
@@ -15,6 +16,7 @@ const {
   setRuntimeWhatsAppConfig,
   verifyMetaConnection,
   PEYUG_OFFICIAL_TEMPLATES,
+  getTemplateDetails,
 } = require('../utils/sendWhatsApp');
 
 const getTelecallerCustomerIds = async (user) => {
@@ -74,8 +76,15 @@ const sendMessage = asyncHandler(async (req, res) => {
 
   const cleanPhone = cleanPhoneNumber(targetMobile);
   const recipientName = customer?.name || name || 'Customer';
-  const waLink = getWhatsAppWebLink(cleanPhone, messageText);
-  const waMeLink = getWaMeLink(cleanPhone, messageText);
+
+  // If a template is specified, resolve the exact approved template body
+  const templateObj = req.body.templateName ? getTemplateDetails(req.body.templateName) : null;
+  if (templateObj?.bodyText) {
+    messageText = templateObj.bodyText;
+  }
+
+  let waLink = getWhatsAppWebLink(cleanPhone, messageText);
+  let waMeLink = getWaMeLink(cleanPhone, messageText);
 
   // Attempt real delivery via Meta WhatsApp Cloud API if credentials configured
   await loadDbConfig();
@@ -100,6 +109,12 @@ const sendMessage = asyncHandler(async (req, res) => {
     }
   }
 
+  if (deliveryResult.bodyText) {
+    messageText = deliveryResult.bodyText;
+    waLink = getWhatsAppWebLink(cleanPhone, messageText);
+    waMeLink = getWaMeLink(cleanPhone, messageText);
+  }
+
   const isCloudSuccess = Boolean(deliveryResult.success);
   const is24hClosed = Boolean(
     deliveryResult.is24hWindowClosed ||
@@ -120,6 +135,7 @@ const sendMessage = asyncHandler(async (req, res) => {
     phone: cleanPhone || targetMobile,
     mobile: cleanPhone || targetMobile,
     message: messageText,
+    templateName: req.body.templateName || '',
     type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom', 'greeting'].includes(type)
       ? (type === 'greeting' ? 'general' : type)
       : 'custom',
@@ -144,6 +160,7 @@ const sendMessage = asyncHandler(async (req, res) => {
     waLink,
     waMeLink,
     message: messageText,
+    templateName: req.body.templateName || '',
     recipient: {
       id: customer?._id,
       name: recipientName,
@@ -202,8 +219,11 @@ const sendTemplate = asyncHandler(async (req, res) => {
   }
 
   const cleanPhone = cleanPhoneNumber(targetMobile);
-  const waLink = getWhatsAppWebLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
-  const waMeLink = getWaMeLink(cleanPhone, displayMessage || `[Template: ${templateName}]`);
+  const templateObj = getTemplateDetails(templateName);
+  let resolvedBody = displayMessage || templateObj?.bodyText || `[Template: ${templateName}]`;
+
+  let waLink = getWhatsAppWebLink(cleanPhone, resolvedBody);
+  let waMeLink = getWaMeLink(cleanPhone, resolvedBody);
 
   await loadDbConfig();
   const token = getToken();
@@ -220,6 +240,12 @@ const sendTemplate = asyncHandler(async (req, res) => {
     });
   }
 
+  if (result.bodyText) {
+    resolvedBody = result.bodyText;
+    waLink = getWhatsAppWebLink(cleanPhone, resolvedBody);
+    waMeLink = getWaMeLink(cleanPhone, resolvedBody);
+  }
+
   const isCloudSuccess = Boolean(result.success);
   const deliveryMode = isCloudSuccess
     ? 'cloud_api'
@@ -233,7 +259,8 @@ const sendTemplate = asyncHandler(async (req, res) => {
     customerName: customer?.name || 'Customer',
     phone: cleanPhone || targetMobile,
     mobile: cleanPhone || targetMobile,
-    message: displayMessage || `[Template: ${templateName}]`,
+    message: resolvedBody,
+    templateName: templateName || '',
     type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
       ? type
       : 'template',
@@ -250,6 +277,8 @@ const sendTemplate = asyncHandler(async (req, res) => {
     deliveredVia: deliveryMode,
     isCloudApi: isCloudSuccess,
     isTestMode: !isConfigured,
+    message: resolvedBody,
+    templateName: templateName || '',
     waLink,
     waMeLink,
     log,
@@ -548,6 +577,129 @@ const testConnection = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Get All Live Templates directly from Meta WABA + merged official list
+// @route   GET /api/whatsapp/templates
+// @access  Private
+const getLiveTemplates = asyncHandler(async (req, res) => {
+  await loadDbConfig();
+  const token = getToken();
+  const wabaId = process.env.WHATSAPP_WABA_ID || '1604281820561116';
+
+  let liveTemplates = [];
+  if (token && wabaId) {
+    try {
+      const { data } = await axios.get(
+        `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || 'v23.0'}/${wabaId}/message_templates`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { limit: 100 },
+        }
+      );
+      if (data && data.data) {
+        liveTemplates = data.data.map((t) => {
+          const bodyComp = (t.components || []).find((c) => c.type === 'BODY');
+          const headerComp = (t.components || []).find((c) => c.type === 'HEADER');
+          const buttonsComp = (t.components || []).find((c) => c.type === 'BUTTONS');
+          return {
+            name: t.name,
+            label: t.name.replace(/_/g, ' '),
+            status: t.status,
+            language: t.language,
+            category: t.category,
+            hasImage: headerComp ? headerComp.format === 'IMAGE' : false,
+            headerType: headerComp ? headerComp.format : 'NONE',
+            bodyText: bodyComp ? bodyComp.text : '',
+            buttons: buttonsComp ? buttonsComp.buttons : [],
+            description: bodyComp?.text?.substring(0, 80) + '...' || '',
+          };
+        });
+      }
+    } catch (err) {
+      console.warn('Could not fetch live Meta templates:', err.message);
+    }
+  }
+
+  // Merge: Start with rich official templates with Hindi titles and details
+  const merged = [...PEYUG_OFFICIAL_TEMPLATES];
+  for (const lt of liveTemplates) {
+    const existing = merged.find((m) => m.name === lt.name);
+    if (!existing) {
+      merged.push(lt);
+    } else {
+      existing.status = lt.status;
+    }
+  }
+
+  res.json({
+    success: true,
+    count: merged.length,
+    templates: merged,
+    liveMetaCount: liveTemplates.length,
+  });
+});
+
+// @desc    Create / Register New Meta WhatsApp Template
+// @route   POST /api/whatsapp/templates
+// @access  Private/Admin
+const createMetaTemplate = asyncHandler(async (req, res) => {
+  const { name, category = 'MARKETING', language = 'en_US', bodyText, hasImage = true } = req.body;
+
+  if (!name || !bodyText) {
+    res.status(400);
+    throw new Error('Template name and bodyText are required');
+  }
+
+  const cleanName = name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  await loadDbConfig();
+  const token = getToken();
+  const wabaId = process.env.WHATSAPP_WABA_ID || '1604281820561116';
+
+  if (!token || !wabaId) {
+    res.status(400);
+    throw new Error('Meta WABA credentials not configured');
+  }
+
+  const components = [];
+  if (hasImage) {
+    components.push({
+      type: 'HEADER',
+      format: 'IMAGE',
+      example: {
+        header_handle: ['https://images.unsplash.com/photo-1556742049-0a67c5574f73?w=800'],
+      },
+    });
+  }
+
+  components.push({
+    type: 'BODY',
+    text: bodyText,
+  });
+
+  try {
+    const { data } = await axios.post(
+      `https://graph.facebook.com/${process.env.WHATSAPP_API_VERSION || 'v23.0'}/${wabaId}/message_templates`,
+      {
+        name: cleanName,
+        category,
+        language,
+        components,
+      },
+      {
+        headers: { Authorization: `Bearer ${token}` },
+      }
+    );
+
+    res.status(201).json({
+      success: true,
+      message: `Template "${cleanName}" submitted to Meta for approval! Status: ${data.status || 'PENDING'}`,
+      template: data,
+    });
+  } catch (err) {
+    res.status(400);
+    throw new Error(err.response?.data?.error?.message || err.message);
+  }
+});
+
 module.exports = {
   sendMessage,
   sendTemplate,
@@ -558,4 +710,6 @@ module.exports = {
   getConfig,
   updateConfig,
   testConnection,
+  getLiveTemplates,
+  createMetaTemplate,
 };

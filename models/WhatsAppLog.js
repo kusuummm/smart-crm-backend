@@ -43,7 +43,7 @@ const whatsAppLogSchema = new mongoose.Schema(
     },
     deliveryMode: {
       type: String,
-      enum: ['cloud_api', 'wa_link', 'wa_me', 'mock', 'test_mode'],
+      enum: ['cloud_api', 'wa_web', 'real_whatsapp', 'wa_link', 'wa_me', 'mock', 'test_mode'],
       default: 'cloud_api',
     },
     error: { type: String, default: '' },

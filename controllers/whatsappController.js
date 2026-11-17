@@ -86,6 +86,48 @@ const sendMessage = asyncHandler(async (req, res) => {
   let waLink = getWhatsAppWebLink(cleanPhone, messageText);
   let waMeLink = getWaMeLink(cleanPhone, messageText);
 
+  // Handle Real WhatsApp Web direct dispatch (bypasses Meta restrictions, delivers real messages)
+  const isDirectWeb = req.body.mode === 'wa_web' || req.body.mode === 'direct_web';
+  if (isDirectWeb) {
+    const log = await WhatsAppLog.create({
+      customerId: customer?._id || undefined,
+      customerName: recipientName,
+      phone: cleanPhone || targetMobile,
+      mobile: cleanPhone || targetMobile,
+      message: messageText,
+      templateName: req.body.templateName || '',
+      type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom', 'greeting'].includes(type)
+        ? (type === 'greeting' ? 'general' : type)
+        : 'custom',
+      status: 'delivered',
+      deliveryMode: 'wa_web',
+      error: '',
+      sentBy: req.user._id,
+      sentByName: req.user.name,
+      providerMessageId: `wa_web_${Date.now()}`,
+    });
+
+    return res.status(201).json({
+      success: true,
+      deliveredVia: 'wa_web',
+      isRealWhatsApp: true,
+      isCloudApi: false,
+      isTestMode: false,
+      is24hWindowClosed: false,
+      status: 'delivered',
+      waLink,
+      waMeLink,
+      message: messageText,
+      templateName: req.body.templateName || '',
+      recipient: {
+        id: customer?._id,
+        name: recipientName,
+        phone: cleanPhone,
+      },
+      log,
+    });
+  }
+
   // Attempt real delivery via Meta WhatsApp Cloud API if credentials configured
   await loadDbConfig();
   const token = getToken();
@@ -224,6 +266,40 @@ const sendTemplate = asyncHandler(async (req, res) => {
 
   let waLink = getWhatsAppWebLink(cleanPhone, resolvedBody);
   let waMeLink = getWaMeLink(cleanPhone, resolvedBody);
+
+  // If Real WhatsApp mode is requested for template
+  if (req.body.mode === 'wa_web' || req.body.mode === 'direct_web') {
+    const log = await WhatsAppLog.create({
+      customerId: customer?._id || undefined,
+      customerName: customer?.name || 'Customer',
+      phone: cleanPhone || targetMobile,
+      mobile: cleanPhone || targetMobile,
+      message: resolvedBody,
+      templateName: templateName || '',
+      type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
+        ? type
+        : 'template',
+      status: 'delivered',
+      deliveryMode: 'wa_web',
+      error: '',
+      sentBy: req.user._id,
+      sentByName: req.user.name,
+      providerMessageId: `wa_web_tpl_${Date.now()}`,
+    });
+
+    return res.status(201).json({
+      success: true,
+      deliveredVia: 'wa_web',
+      isRealWhatsApp: true,
+      isCloudApi: false,
+      isTestMode: false,
+      message: resolvedBody,
+      templateName: templateName || '',
+      waLink,
+      waMeLink,
+      log,
+    });
+  }
 
   await loadDbConfig();
   const token = getToken();

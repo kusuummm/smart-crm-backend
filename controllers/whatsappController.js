@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const Customer = require('../models/Customer');
+const baileysService = require('../services/baileysService');
 const {
   cleanPhoneNumber,
   getWhatsAppWebLink,
@@ -86,9 +87,49 @@ const sendMessage = asyncHandler(async (req, res) => {
   let waLink = getWhatsAppWebLink(cleanPhone, messageText);
   let waMeLink = getWaMeLink(cleanPhone, messageText);
 
-  // Handle Real WhatsApp Web direct dispatch (bypasses Meta restrictions, delivers real messages)
+  // 1. If Built-in WhatsApp Client (Baileys) is connected, send directly through socket!
+  if (baileysService.isConnected()) {
+    const bResult = await baileysService.sendMessage(cleanPhone, messageText);
+    if (bResult.success) {
+      const log = await WhatsAppLog.create({
+        customerId: customer?._id || undefined,
+        customerName: recipientName,
+        phone: cleanPhone || targetMobile,
+        mobile: cleanPhone || targetMobile,
+        message: messageText,
+        templateName: req.body.templateName || '',
+        type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom', 'greeting'].includes(type)
+          ? (type === 'greeting' ? 'general' : type)
+          : 'custom',
+        status: 'delivered',
+        deliveryMode: 'real_whatsapp',
+        error: '',
+        sentBy: req.user._id,
+        sentByName: req.user.name,
+        providerMessageId: bResult.messageId || `wa_socket_${Date.now()}`,
+      });
+
+      return res.status(201).json({
+        success: true,
+        deliveredVia: 'real_whatsapp',
+        isRealWhatsApp: true,
+        isCloudApi: false,
+        status: 'delivered',
+        message: messageText,
+        templateName: req.body.templateName || '',
+        recipient: {
+          id: customer?._id,
+          name: recipientName,
+          phone: cleanPhone,
+        },
+        log,
+      });
+    }
+  }
+
+  // 2. Handle Real WhatsApp Web direct dispatch (if explicitly requested)
   const isDirectWeb = req.body.mode === 'wa_web' || req.body.mode === 'direct_web';
-  if (isDirectWeb) {
+  if (isDirectWeb && !baileysService.isConnected()) {
     const log = await WhatsAppLog.create({
       customerId: customer?._id || undefined,
       customerName: recipientName,
@@ -266,6 +307,40 @@ const sendTemplate = asyncHandler(async (req, res) => {
 
   let waLink = getWhatsAppWebLink(cleanPhone, resolvedBody);
   let waMeLink = getWaMeLink(cleanPhone, resolvedBody);
+
+  // If Built-in WhatsApp (Baileys) is connected, send template body directly through socket!
+  if (baileysService.isConnected()) {
+    const bResult = await baileysService.sendMessage(cleanPhone, resolvedBody);
+    if (bResult.success) {
+      const log = await WhatsAppLog.create({
+        customerId: customer?._id || undefined,
+        customerName: customer?.name || 'Customer',
+        phone: cleanPhone || targetMobile,
+        mobile: cleanPhone || targetMobile,
+        message: resolvedBody,
+        templateName: templateName || '',
+        type: ['template', 'follow-up', 'offer', 'meeting-reminder', 'broadcast', 'system', 'general', 'application', 'custom'].includes(type)
+          ? type
+          : 'template',
+        status: 'delivered',
+        deliveryMode: 'real_whatsapp',
+        error: '',
+        sentBy: req.user._id,
+        sentByName: req.user.name,
+        providerMessageId: bResult.messageId || `wa_socket_tpl_${Date.now()}`,
+      });
+
+      return res.status(201).json({
+        success: true,
+        deliveredVia: 'real_whatsapp',
+        isRealWhatsApp: true,
+        isCloudApi: false,
+        message: resolvedBody,
+        templateName: templateName || '',
+        log,
+      });
+    }
+  }
 
   // If Real WhatsApp mode is requested for template
   if (req.body.mode === 'wa_web' || req.body.mode === 'direct_web') {
@@ -834,6 +909,40 @@ const createMetaTemplate = asyncHandler(async (req, res) => {
   }
 });
 
+// @desc    Get Built-in WhatsApp Device status and QR code
+// @route   GET /api/whatsapp/device/status
+// @access  Private
+const getDeviceStatus = asyncHandler(async (req, res) => {
+  res.json({
+    success: true,
+    ...baileysService.getStatus(),
+  });
+});
+
+// @desc    Connect Built-in WhatsApp Device (starts QR generation)
+// @route   POST /api/whatsapp/device/connect
+// @access  Private
+const connectDevice = asyncHandler(async (req, res) => {
+  baileysService.initBaileys(true);
+  const status = await baileysService.waitForQr(3000);
+  res.json({
+    success: true,
+    ...status,
+  });
+});
+
+// @desc    Disconnect Built-in WhatsApp Device
+// @route   POST /api/whatsapp/device/disconnect
+// @access  Private
+const disconnectDevice = asyncHandler(async (req, res) => {
+  await baileysService.disconnect();
+  res.json({
+    success: true,
+    connected: false,
+    status: 'disconnected',
+  });
+});
+
 module.exports = {
   sendMessage,
   sendTemplate,
@@ -846,4 +955,7 @@ module.exports = {
   testConnection,
   getLiveTemplates,
   createMetaTemplate,
+  getDeviceStatus,
+  connectDevice,
+  disconnectDevice,
 };

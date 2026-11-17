@@ -271,4 +271,10 @@ app.listen(PORT, () => {
     `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
   );
   startMeetingReminderScheduler(60000);
+  try {
+    const baileysService = require('./services/baileysService');
+    baileysService.initBaileys().catch((e) => console.warn('[Baileys] Autostart notice:', e.message));
+  } catch (bErr) {
+    console.warn('[Baileys] Init error:', bErr.message);
+  }
 });

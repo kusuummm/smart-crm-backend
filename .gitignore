@@ -20,3 +20,8 @@ Thumbs.db
 # User Uploads
 uploads/*
 !uploads/.gitkeep
+
+# Baileys WhatsApp Session Auth Info
+auth_info_baileys/
+auth_info_baileys/*
+

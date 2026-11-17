@@ -12,6 +12,9 @@ const {
   testConnection,
   getLiveTemplates,
   createMetaTemplate,
+  getDeviceStatus,
+  connectDevice,
+  disconnectDevice,
 } = require('../controllers/whatsappController');
 const { protect, authorize } = require('../middleware/auth');
 
@@ -35,5 +38,10 @@ router.post('/templates', authorize('admin'), createMetaTemplate);
 router.get('/config', getConfig);
 router.put('/config', authorize('admin'), updateConfig);
 router.post('/test-connection', authorize('admin'), testConnection);
+
+// Built-in WhatsApp Device Connection (Baileys Web Client)
+router.get('/device/status', getDeviceStatus);
+router.post('/device/connect', connectDevice);
+router.post('/device/disconnect', disconnectDevice);
 
 module.exports = router;

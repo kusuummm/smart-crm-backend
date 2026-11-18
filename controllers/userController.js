@@ -502,8 +502,8 @@ const getSystemOverview = asyncHandler(async (req, res) => {
     EmailLog.countDocuments(),
   ]);
 
-  const totalLeads = leadCustomerIds.length > 0 ? leadCustomerIds.length : 7;
-  const totalClients = totalClientsDoc > 0 ? totalClientsDoc : 4;
+  const totalLeads = leadCustomerIds.length;
+  const totalClients = totalClientsDoc;
 
   const smtpUser = process.env.SMTP_USER || 'info@paymanent.com';
   const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;

@@ -483,10 +483,10 @@ const reassignWorkload = asyncHandler(async (req, res) => {
 // @route   GET /api/users/system-overview
 // @access  Private/Admin
 const getSystemOverview = asyncHandler(async (req, res) => {
-  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [
     totalUsers,
-    totalClientsDoc,
+    totalClients,
+    totalLeads,
     totalFollowUps,
     totalCalls,
     totalEvents,
@@ -494,16 +494,14 @@ const getSystemOverview = asyncHandler(async (req, res) => {
     totalEmails,
   ] = await Promise.all([
     User.countDocuments(),
-    Customer.countDocuments({ _id: { $nin: leadCustomerIds } }),
+    Customer.countDocuments(),
+    Lead.countDocuments(),
     FollowUp.countDocuments(),
     CallHistory.countDocuments(),
     Event.countDocuments(),
     WhatsAppLog.countDocuments(),
     EmailLog.countDocuments(),
   ]);
-
-  const totalLeads = leadCustomerIds.length;
-  const totalClients = totalClientsDoc;
 
   const smtpUser = process.env.SMTP_USER || 'info@paymanent.com';
   const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;

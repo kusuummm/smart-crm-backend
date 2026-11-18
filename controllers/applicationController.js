@@ -24,9 +24,9 @@ const generateApplicationNumber = async () => {
 // @route   GET /api/applications/stats
 // @access  Private (Admin / Manager)
 const getStats = asyncHandler(async (req, res) => {
-  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [
-    totalClientsDoc,
+    totalClients,
+    totalLeads,
     totalApplications,
     newApplications,
     pendingDocuments,
@@ -37,7 +37,8 @@ const getStats = asyncHandler(async (req, res) => {
     paymentPending,
     paymentCompleted,
   ] = await Promise.all([
-    Customer.countDocuments({ _id: { $nin: leadCustomerIds } }),
+    Customer.countDocuments(),
+    Lead.countDocuments(),
     Application.countDocuments(),
     Application.countDocuments({ status: 'new' }),
     Application.countDocuments({ status: 'pending_documents' }),
@@ -48,9 +49,6 @@ const getStats = asyncHandler(async (req, res) => {
     Application.countDocuments({ paymentStatus: 'pending' }),
     Application.countDocuments({ paymentStatus: 'completed' }),
   ]);
-
-  const totalLeads = leadCustomerIds.length > 0 ? leadCustomerIds.length : 7;
-  const totalClients = totalClientsDoc > 0 ? totalClientsDoc : 4;
 
   res.json({
     success: true,

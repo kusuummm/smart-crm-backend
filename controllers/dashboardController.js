@@ -44,22 +44,32 @@ const getStats = asyncHandler(async (req, res) => {
       ],
     };
     logFilter = { sentBy: req.user._id };
+  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
+    if (req.query.telecallerId === 'unassigned') {
+      customerFilter = {
+        $or: [
+          { telecallerId: null },
+          { telecallerId: { $exists: false } },
+          { assignedTelecaller: 'Unassigned' },
+          { assignedTelecaller: '' },
+          { assignedTelecaller: null },
+        ],
+      };
+      leadFilter = {
+        $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
+      };
+    } else {
+      customerFilter = { telecallerId: req.query.telecallerId };
+      leadFilter = { telecallerId: req.query.telecallerId };
+    }
+    followUpFilter = { assignedTo: req.query.telecallerId };
+    logFilter = { sentBy: req.query.telecallerId };
   } else {
-    // Admin CANNOT access contacts assigned to callers! Admin only sees unassigned items
-    customerFilter = {
-      $or: [
-        { telecallerId: null },
-        { telecallerId: { $exists: false } },
-        { assignedTelecaller: 'Unassigned' },
-        { assignedTelecaller: '' },
-        { assignedTelecaller: null },
-      ],
-    };
-    leadFilter = {
-      $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
-    };
-    followUpFilter = { createdBy: req.user._id };
-    logFilter = { sentBy: req.user._id };
+    // Admin CRM-wide overview: counts all customers, leads, and CRM activities
+    customerFilter = {};
+    leadFilter = {};
+    followUpFilter = {};
+    logFilter = {};
   }
 
   const today = new Date().toISOString().split('T')[0];

@@ -143,12 +143,10 @@ const getUsers = asyncHandler(async (req, res) => {
   const callerUserIds = users.filter((u) => isOperationalRole(u.role)).map((u) => u._id);
   const callerNames = users.filter((u) => isOperationalRole(u.role)).map((u) => u.name);
 
-  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [customerAgg, leadAgg] = await Promise.all([
     Customer.aggregate([
       {
         $match: {
-          _id: { $nin: leadCustomerIds },
           $or: [
             { telecallerId: { $in: callerUserIds } },
             { assignedTelecaller: { $in: callerNames } },

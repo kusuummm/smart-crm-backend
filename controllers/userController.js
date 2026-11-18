@@ -27,7 +27,23 @@ const createUser = asyncHandler(async (req, res) => {
   const existing = await User.findOne({ email: email.toLowerCase() });
   if (existing) {
     res.status(400);
-    throw new Error('A user with this email already exists');
+    throw new Error('A user with this email address already exists');
+  }
+
+  if (phone && phone.trim()) {
+    const cleanPhone = phone.trim().replace(/\D/g, '').slice(-10);
+    if (cleanPhone && cleanPhone.length >= 10) {
+      const existingPhone = await User.findOne({
+        $or: [
+          { phone: phone.trim() },
+          { phone: new RegExp(cleanPhone + '$') },
+        ],
+      });
+      if (existingPhone) {
+        res.status(400);
+        throw new Error('A user with this phone number already exists');
+      }
+    }
   }
 
   // Normalize role to lower-case

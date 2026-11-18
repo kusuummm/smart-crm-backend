@@ -100,7 +100,15 @@ const getEmailLogs = asyncHandler(async (req, res) => {
   const conditions = [];
 
   if (!isAdminOrOwner(req.user)) {
-    conditions.push({ sentBy: req.user._id });
+    const assignedCustIds = await Customer.find({
+      $or: [{ telecallerId: req.user._id }, { assignedTelecaller: req.user.name }],
+    }).distinct('_id');
+    conditions.push({
+      $or: [
+        { sentBy: req.user._id },
+        { customerId: { $in: assignedCustIds } },
+      ],
+    });
   } else if (sentBy && sentBy !== 'all') {
     conditions.push({ sentBy });
   }

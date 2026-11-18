@@ -35,8 +35,10 @@ customerSchema.pre('validate', function (next) {
   next();
 });
 
-// Support fast deduplication and lookup by mobile and phone
-customerSchema.index({ mobile: 1 });
+// Support fast deduplication and unique lookup by mobile, email, and company
+customerSchema.index({ mobile: 1 }, { unique: true });
+customerSchema.index({ email: 1 }, { unique: true, partialFilterExpression: { email: { $type: 'string', $gt: '' } } });
+customerSchema.index({ company: 1 }, { unique: true, partialFilterExpression: { company: { $type: 'string', $gt: '' } } });
 customerSchema.index({ phone: 1 });
 customerSchema.index({ telecallerId: 1, createdAt: -1 });
 customerSchema.index({ assignedTelecaller: 1 });

@@ -5,14 +5,14 @@ const {
   createBroadcast,
   retryBroadcast,
 } = require('../controllers/broadcastController');
-const { protect } = require('../middleware/auth');
+const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
 
 router.route('/')
   .get(getBroadcasts)
-  .post(createBroadcast);
+  .post(authorize('admin'), createBroadcast);
 
-router.post('/:id/retry', retryBroadcast);
+router.post('/:id/retry', authorize('admin'), retryBroadcast);
 
 module.exports = router;

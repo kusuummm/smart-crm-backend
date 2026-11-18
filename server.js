@@ -9,6 +9,7 @@ const path = require('path');
 
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
+const { protect, authorize } = require('./middleware/auth');
 
 // Route imports
 const authRoutes = require('./routes/authRoutes');
@@ -114,7 +115,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.get('/api/health/network', async (req, res) => {
+app.get('/api/health/network', protect, authorize('admin'), async (req, res) => {
   const net = require('net');
   const host = process.env.EMAIL_HOST || 'send.one.com';
   const ports = [465, 587, 2525];

@@ -409,31 +409,67 @@ const bulkImportLeads = asyncHandler(async (req, res) => {
     });
   }
 
-  // 2. In-batch deduplication (first occurrence wins)
+  // 2. In-batch deduplication (first occurrence wins across mobile, email, and company)
   const uniqueInBatch = [];
   const seenMobiles = new Set();
+  const seenEmails = new Set();
+  const seenCompanies = new Set();
   let inBatchDuplicates = 0;
 
   for (const row of validRows) {
+    const cleanEmail = (row.email || '').toLowerCase().trim();
+    const cleanCompany = (row.company || '').toLowerCase().trim();
+
     if (seenMobiles.has(row.mobile)) {
       inBatchDuplicates++;
       continue;
     }
+    if (cleanEmail && seenEmails.has(cleanEmail)) {
+      inBatchDuplicates++;
+      continue;
+    }
+    if (cleanCompany && seenCompanies.has(cleanCompany)) {
+      inBatchDuplicates++;
+      continue;
+    }
+
     seenMobiles.add(row.mobile);
+    if (cleanEmail) seenEmails.add(cleanEmail);
+    if (cleanCompany) seenCompanies.add(cleanCompany);
     uniqueInBatch.push(row);
   }
 
-  // 3. Database deduplication against existing customers
+  // 3. Database deduplication against existing customers (by mobile, email, and company)
   let rowsToInsert = uniqueInBatch;
   let dbDuplicatesCount = 0;
 
   if (skipDuplicates) {
     const allMobiles = uniqueInBatch.map((r) => r.mobile);
-    const existingCustomers = await Customer.find({ mobile: { $in: allMobiles } }).select('mobile').lean();
+    const allEmails = uniqueInBatch.map((r) => (r.email || '').toLowerCase().trim()).filter(Boolean);
+    const allCompanies = uniqueInBatch.map((r) => (r.company || '').trim()).filter(Boolean);
+
+    const orConditions = [{ mobile: { $in: allMobiles } }];
+    if (allEmails.length > 0) orConditions.push({ email: { $in: allEmails } });
+    if (allCompanies.length > 0) orConditions.push({ company: { $in: allCompanies } });
+
+    const existingCustomers = await Customer.find({ $or: orConditions }).select('mobile email company').lean();
     const existingMobileSet = new Set(existingCustomers.map((c) => c.mobile));
+    const existingEmailSet = new Set(existingCustomers.map((c) => (c.email || '').toLowerCase().trim()).filter(Boolean));
+    const existingCompanySet = new Set(existingCustomers.map((c) => (c.company || '').toLowerCase().trim()).filter(Boolean));
 
     rowsToInsert = uniqueInBatch.filter((r) => {
+      const rowEmail = (r.email || '').toLowerCase().trim();
+      const rowCompany = (r.company || '').toLowerCase().trim();
+
       if (existingMobileSet.has(r.mobile)) {
+        dbDuplicatesCount++;
+        return false;
+      }
+      if (rowEmail && existingEmailSet.has(rowEmail)) {
+        dbDuplicatesCount++;
+        return false;
+      }
+      if (rowCompany && existingCompanySet.has(rowCompany)) {
         dbDuplicatesCount++;
         return false;
       }

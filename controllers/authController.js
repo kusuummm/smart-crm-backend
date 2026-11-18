@@ -396,6 +396,22 @@ const register = asyncHandler(async (req, res) => {
     throw new Error('An account with this email address already exists. Please sign in.');
   }
 
+  if (phone && phone.trim()) {
+    const cleanPhone = phone.trim().replace(/\D/g, '').slice(-10);
+    if (cleanPhone && cleanPhone.length >= 10) {
+      const existingPhone = await User.findOne({
+        $or: [
+          { phone: phone.trim() },
+          { phone: new RegExp(cleanPhone + '$') },
+        ],
+      });
+      if (existingPhone) {
+        res.status(400);
+        throw new Error('An account with this phone number already exists.');
+      }
+    }
+  }
+
   const user = await User.create({
     name: name.trim(),
     email: normalizedEmail,

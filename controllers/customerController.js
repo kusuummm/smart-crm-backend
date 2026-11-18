@@ -52,18 +52,72 @@ const sanitizeCustomerPayload = (payload) => {
   return cleaned;
 };
 
-// @desc    Create a customer
+// @desc    Create a customer (Strict Uniqueness: Unique Mobile, Unique Email, Unique Business/Company)
 // @route   POST /api/customers
 // @access  Private
 const createCustomer = asyncHandler(async (req, res) => {
-  const name = req.body.name;
-  const mobile = req.body.mobile || req.body.phone;
-  if (!name || !mobile) {
+  const name = (req.body.name || '').toString().trim();
+  const rawMobile = (req.body.mobile || req.body.phone || '').toString().trim();
+
+  if (!name || !rawMobile) {
     res.status(400);
     throw new Error('Customer name and mobile number are required');
   }
 
-  const payload = sanitizeCustomerPayload({ ...req.body, mobile });
+  // 1. Strict Uniqueness Check: Mobile / Phone Number
+  const cleanMobile = rawMobile.replace(/\D/g, '').slice(-10);
+  if (!cleanMobile || cleanMobile.length < 10) {
+    res.status(400);
+    throw new Error('A valid 10-digit mobile number is required');
+  }
+
+  const existingByPhone = await Customer.findOne({
+    $or: [
+      { mobile: rawMobile },
+      { mobile: cleanMobile },
+      { phone: rawMobile },
+      { phone: cleanMobile },
+      { mobile: new RegExp(cleanMobile + '$') },
+      { phone: new RegExp(cleanMobile + '$') },
+      { alternateNumber: new RegExp(cleanMobile + '$') },
+    ],
+  });
+
+  if (existingByPhone) {
+    res.status(400);
+    throw new Error(`Mobile number ending in ${cleanMobile} is already registered (${existingByPhone.name}). Existing numbers cannot register again.`);
+  }
+
+  // 2. Strict Uniqueness Check: Email Address (if provided)
+  const rawEmail = (req.body.email || '').toString().trim().toLowerCase();
+  if (rawEmail && !rawEmail.endsWith('@example.com')) {
+    const existingByEmail = await Customer.findOne({ email: rawEmail });
+    if (existingByEmail) {
+      res.status(400);
+      throw new Error(`Email address "${rawEmail}" is already registered (${existingByEmail.name}). Existing emails cannot register again.`);
+    }
+  }
+
+  // 3. Strict Uniqueness Check: Business / Company Name (if provided)
+  const rawCompany = (req.body.company || req.body.businessName || '').toString().trim();
+  if (rawCompany) {
+    const existingByCompany = await Customer.findOne({
+      company: { $regex: new RegExp(`^${escapeRegex(rawCompany)}$`, 'i') },
+    });
+    if (existingByCompany) {
+      res.status(400);
+      throw new Error(`Business "${rawCompany}" is already registered (${existingByCompany.name}). Existing businesses cannot register again.`);
+    }
+  }
+
+  const payload = sanitizeCustomerPayload({
+    ...req.body,
+    name,
+    mobile: cleanMobile,
+    phone: cleanMobile,
+    email: rawEmail || undefined,
+    company: rawCompany || '',
+  });
 
   if (!isAdminOrOwner(req.user)) {
     payload.telecallerId = req.user._id;
@@ -230,6 +284,60 @@ const updateCustomer = asyncHandler(async (req, res) => {
   }
 
   const updates = sanitizeCustomerPayload(req.body);
+
+  // 1. Strict Uniqueness Check on Update: Mobile Number
+  if (updates.mobile || updates.phone) {
+    const targetMobile = (updates.mobile || updates.phone).toString().replace(/\D/g, '').slice(-10);
+    if (targetMobile && targetMobile.length >= 10) {
+      const existingByPhone = await Customer.findOne({
+        _id: { $ne: customer._id },
+        $or: [
+          { mobile: targetMobile },
+          { phone: targetMobile },
+          { mobile: new RegExp(targetMobile + '$') },
+          { phone: new RegExp(targetMobile + '$') },
+        ],
+      });
+      if (existingByPhone) {
+        res.status(400);
+        throw new Error(`Mobile number ending in ${targetMobile} is already registered to another contact (${existingByPhone.name}). Phone numbers must be unique.`);
+      }
+      updates.mobile = targetMobile;
+      updates.phone = targetMobile;
+    }
+  }
+
+  // 2. Strict Uniqueness Check on Update: Email Address
+  if (updates.email) {
+    const targetEmail = updates.email.toString().trim().toLowerCase();
+    if (targetEmail && !targetEmail.endsWith('@example.com')) {
+      const existingByEmail = await Customer.findOne({
+        _id: { $ne: customer._id },
+        email: targetEmail,
+      });
+      if (existingByEmail) {
+        res.status(400);
+        throw new Error(`Email address "${targetEmail}" is already registered to another contact (${existingByEmail.name}). Email addresses must be unique.`);
+      }
+      updates.email = targetEmail;
+    }
+  }
+
+  // 3. Strict Uniqueness Check on Update: Business / Company Name
+  if (updates.company || req.body.businessName) {
+    const targetCompany = (updates.company || req.body.businessName || '').toString().trim();
+    if (targetCompany) {
+      const existingByCompany = await Customer.findOne({
+        _id: { $ne: customer._id },
+        company: { $regex: new RegExp(`^${escapeRegex(targetCompany)}$`, 'i') },
+      });
+      if (existingByCompany) {
+        res.status(400);
+        throw new Error(`Business "${targetCompany}" is already registered to another contact (${existingByCompany.name}). Business names must be unique.`);
+      }
+      updates.company = targetCompany;
+    }
+  }
 
   if (updates.telecallerId !== undefined || req.body.unassign === true) {
     if (updates.telecallerId && updates.telecallerId !== 'unassigned') {

@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
@@ -11,18 +16,33 @@ const User = require('../models/User');
 // @route   GET /api/dashboard/stats?telecallerId=
 // @access  Private
 const getStats = asyncHandler(async (req, res) => {
-  const isTelecaller = req.user.role === 'telecaller';
+  const isAgent = !isAdminOrOwner(req.user);
   let customerFilter = {};
   let leadFilter = {};
   let followUpFilter = {};
   let logFilter = {};
 
-  if (isTelecaller) {
-    customerFilter = {
+  if (isAgent) {
+    const customerIds = await Customer.find({
       $or: [{ telecallerId: req.user._id }, { assignedTelecaller: req.user.name }],
+    }).distinct('_id');
+
+    const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
+    const leadCustomerIdStrings = new Set(leadCustomerIds.map(String));
+    const distinctClientIds = customerIds.filter((id) => !leadCustomerIdStrings.has(String(id)));
+
+    // Clients count strictly counts clients, excluding pipeline leads
+    customerFilter = { _id: { $in: distinctClientIds } };
+    leadFilter = {
+      $or: [{ telecallerId: req.user._id }, { customerId: { $in: customerIds } }],
     };
-    leadFilter = { telecallerId: req.user._id };
-    followUpFilter = { createdBy: req.user._id };
+    followUpFilter = {
+      $or: [
+        { createdBy: req.user._id },
+        { assignedTo: req.user._id },
+        { customerId: { $in: customerIds } },
+      ],
+    };
     logFilter = { sentBy: req.user._id };
   } else {
     // Admin CANNOT access contacts assigned to callers! Admin only sees unassigned items

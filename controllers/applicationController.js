@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const emailNotificationService = require('../services/emailNotificationService');
 const whatsAppNotificationService = require('../services/whatsAppNotificationService');
 const asyncHandler = require('express-async-handler');
@@ -86,6 +91,13 @@ const getApplications = asyncHandler(async (req, res) => {
 
   const query = {};
 
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await Customer.find({
+      $or: [{ telecallerId: req.user._id }, { assignedTelecaller: req.user.name }],
+    }).distinct('_id');
+    query.customerId = { $in: customerIds };
+  }
+
   if (status && status !== 'all') {
     if (status === 'rejected_or_resubmission') {
       query.status = { $in: ['rejected', 'resubmission_required'] };
@@ -152,6 +164,19 @@ const getApplicationById = asyncHandler(async (req, res) => {
   if (!application) {
     res.status(404);
     throw new Error('Application not found');
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const custId = application.customerId?._id || application.customerId;
+    const customer = await Customer.findById(custId);
+    const isAssigned = customer && (
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name
+    );
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only view applications for contacts assigned to you');
+    }
   }
 
   res.json({

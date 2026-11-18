@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const Event = require('../models/Event');
 const Customer = require('../models/Customer');
@@ -27,13 +32,12 @@ const createEvent = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
       res.status(403);
-      throw new Error('You can only create events for customers assigned to you');
+      throw new Error('Access denied: You can only create events for contacts assigned to you');
     }
   }
 
@@ -56,8 +60,7 @@ const getEvents = asyncHandler(async (req, res) => {
   const { type, status, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({ customerId: { $in: customerIds } });
   }
@@ -105,8 +108,7 @@ const getUpcomingEvents = asyncHandler(async (req, res) => {
     { date: { $gte: todayStr, $lte: futureStr } },
   ];
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({ customerId: { $in: customerIds } });
   }
@@ -126,12 +128,19 @@ const updateEvent = asyncHandler(async (req, res) => {
     throw new Error('Event not found');
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     if (!customerIds.some(id => String(id) === String(event.customerId))) {
       res.status(403);
-      throw new Error('Access denied to update event for unassigned customer');
+      throw new Error('Access denied: You can only trigger reminders for your own assigned contacts');
+    }
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    if (!customerIds.some(id => String(id) === String(event.customerId))) {
+      res.status(403);
+      throw new Error('Access denied: You cannot update events for other users\' contacts');
     }
   }
 
@@ -151,6 +160,14 @@ const triggerReminder = asyncHandler(async (req, res) => {
   if (!event) {
     res.status(404);
     throw new Error('Event not found');
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    if (!customerIds.some(id => String(id) === String(event.customerId))) {
+      res.status(403);
+      throw new Error('Access denied: You can only trigger reminders for your own assigned contacts');
+    }
   }
 
   const customer = await Customer.findById(event.customerId);
@@ -200,12 +217,19 @@ const deleteEvent = asyncHandler(async (req, res) => {
     throw new Error('Event not found');
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     if (!customerIds.some(id => String(id) === String(event.customerId))) {
       res.status(403);
-      throw new Error('Access denied to delete event for unassigned customer');
+      throw new Error('Access denied: You can only trigger reminders for your own assigned contacts');
+    }
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    if (!customerIds.some(id => String(id) === String(event.customerId))) {
+      res.status(403);
+      throw new Error('Access denied: You can only delete events for your own assigned contacts');
     }
   }
 

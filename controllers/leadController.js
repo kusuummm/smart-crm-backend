@@ -39,8 +39,16 @@ const createLead = asyncHandler(async (req, res) => {
   }
 
   let assignedTelecallerId;
-  if (!isManagerOrAbove(req.user)) {
+  if (!isAdminOrOwner(req.user)) {
     assignedTelecallerId = req.user._id;
+    const isAssigned =
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name ||
+      !customer.telecallerId;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only manage leads for contacts assigned to you');
+    }
   } else {
     assignedTelecallerId = telecallerId || customer.telecallerId || null;
   }
@@ -120,9 +128,15 @@ const getLeads = asyncHandler(async (req, res) => {
   const { status, search, telecallerId, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (!isManagerOrAbove(req.user)) {
-    // Caller strictly gets only their own assigned leads
-    conditions.push({ telecallerId: req.user._id });
+  if (!isAdminOrOwner(req.user)) {
+    // Non-admin lead agent strictly gets ONLY their own assigned leads
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    conditions.push({
+      $or: [
+        { telecallerId: req.user._id },
+        { customerId: { $in: customerIds } },
+      ],
+    });
   } else if (telecallerId && telecallerId !== 'all') {
     if (telecallerId === 'unassigned') {
       conditions.push({
@@ -176,13 +190,13 @@ const getLeadById = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (!isManagerOrAbove(req.user)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId?._id || lead.customerId));
     if (!isOwner) {
       res.status(403);
-      throw new Error('Access denied to lead not assigned to your accounts');
+      throw new Error('Access denied: You cannot access leads assigned to other team members');
     }
   }
 
@@ -206,14 +220,16 @@ const updateLeadStatus = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
-  if (!isManagerOrAbove(req.user)) {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
                     customerIds.some(id => String(id) === String(lead.customerId));
     if (!isOwner) {
       res.status(403);
-      throw new Error('Access denied to lead not assigned to your accounts');
+      throw new Error('Access denied: You cannot update leads assigned to other team members');
     }
+    // Lead agents cannot reassign leads to other members
+    delete req.body.telecallerId;
   }
 
   const nextStatus = status || lead.status;
@@ -288,9 +304,9 @@ const deleteLead = asyncHandler(async (req, res) => {
 // @route   POST /api/leads/bulk-import
 // @access  Private/Admin/Manager
 const bulkImportLeads = asyncHandler(async (req, res) => {
-  if (!isManagerOrAbove(req.user)) {
+  if (!isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Only administrators and managers can import and assign leads');
+    throw new Error('Only administrators and owners can import and assign leads');
   }
 
   const {

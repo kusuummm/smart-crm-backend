@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const Meeting = require('../models/Meeting');
 const Customer = require('../models/Customer');
@@ -40,15 +45,15 @@ const createMeeting = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  // Telecaller assignment & security
+  // Security and telecaller assignment
   let telecaller = null;
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
     telecaller = req.user;
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
       res.status(403);
-      throw new Error('You can only schedule meetings for customers assigned to you');
+      throw new Error('Access denied: You can only schedule meetings for contacts assigned to you');
     }
   } else {
     // If admin, use assigned telecaller or the admin user
@@ -226,7 +231,7 @@ const getMeetings = asyncHandler(async (req, res) => {
   const { date, status, customerId, page = 1, limit = 50 } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
     conditions.push({ telecallerId: req.user._id });
   }
 
@@ -268,9 +273,9 @@ const updateMeeting = asyncHandler(async (req, res) => {
     throw new Error('Meeting not found');
   }
 
-  if (req.user.role === 'telecaller' && String(meeting.telecallerId) !== String(req.user._id)) {
+  if (!isAdminOrOwner(req.user) && String(meeting.telecallerId) !== String(req.user._id)) {
     res.status(403);
-    throw new Error('You can only update your own scheduled meetings');
+    throw new Error('Access denied: You can only update your own scheduled meetings');
   }
 
   const { title, date, time, duration, meetingLink, location, agenda, status } = req.body;
@@ -310,6 +315,11 @@ const sendMeetingReminderNow = asyncHandler(async (req, res) => {
     throw new Error('Meeting not found');
   }
 
+  if (!isAdminOrOwner(req.user) && String(meeting.telecallerId) !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('Access denied: You can only send reminders for your own scheduled meetings');
+  }
+
   const { stage } = req.body;
   let targetStageConfig = null;
 
@@ -344,9 +354,9 @@ const deleteMeeting = asyncHandler(async (req, res) => {
     throw new Error('Meeting not found');
   }
 
-  if (req.user.role === 'telecaller' && String(meeting.telecallerId) !== String(req.user._id)) {
+  if (!isAdminOrOwner(req.user) && String(meeting.telecallerId) !== String(req.user._id)) {
     res.status(403);
-    throw new Error('You can only cancel your own scheduled meetings');
+    throw new Error('Access denied: You can only cancel your own scheduled meetings');
   }
 
   meeting.status = 'cancelled';

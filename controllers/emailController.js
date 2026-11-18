@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
@@ -38,13 +43,12 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
+  if (!isAdminOrOwner(req.user)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned) {
       res.status(403);
-      throw new Error('You can only send emails to customers assigned to you');
+      throw new Error('Access denied: You can only send emails to contacts assigned to you');
     }
   }
 
@@ -95,9 +99,7 @@ const getEmailLogs = asyncHandler(async (req, res) => {
   const { type, status, customerId, page = 1, limit = 10, sentBy } = req.query;
   const conditions = [];
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  const isSupervisor = ['admin', 'owner', 'manager'].includes(callerRole);
-  if (!isSupervisor) {
+  if (!isAdminOrOwner(req.user)) {
     conditions.push({ sentBy: req.user._id });
   } else if (sentBy && sentBy !== 'all') {
     conditions.push({ sentBy });

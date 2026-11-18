@@ -320,9 +320,9 @@ const deleteCustomer = asyncHandler(async (req, res) => {
 // @route   POST /api/customers/bulk-assign
 // @access  Private/Admin/Manager
 const bulkAssignCustomers = asyncHandler(async (req, res) => {
-  if (!isManagerOrAbove(req.user)) {
+  if (!isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Only administrators and managers can bulk assign customers');
+    throw new Error('Only administrators and owners can bulk assign customers');
   }
 
   const { customerIds, telecallerId } = req.body;
@@ -420,6 +420,15 @@ const getCustomerCommunicationHistory = asyncHandler(async (req, res) => {
   if (!customer) {
     res.status(404);
     throw new Error('Customer not found');
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const isAssignedToMe = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+                           customer.assignedTelecaller === req.user.name;
+    if (!isAssignedToMe) {
+      res.status(403);
+      throw new Error('Access denied: You can only view communication history for contacts assigned to your account');
+    }
   }
 
   const phoneNumbers = [customer.mobile, customer.phone, customer.alternateNumber].filter(Boolean);

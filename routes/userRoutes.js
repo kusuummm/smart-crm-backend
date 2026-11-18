@@ -25,12 +25,12 @@ router.post('/heartbeat', protect, heartbeat);
 // Any authenticated user can view users/leads directory (e.g. for reassigning leads or transferring customers)
 router.get('/', protect, getUsers);
 
-// Management & Reporting routes accessible to Managers, Admins, and Owners
-router.get('/callers-progress-report', protect, authorize('manager'), getCallersProgressReport);
-router.get('/callers-progress-detail', protect, authorize('manager'), getCallersProgressDetail);
-router.post('/reassign-workload', protect, authorize('manager'), reassignWorkload);
-router.get('/audit-logs', protect, authorize('manager'), getAuditLogs);
-router.get('/system-overview', protect, authorize('manager'), getSystemOverview);
+// Management & Reporting routes strictly require Administrator or Owner privileges
+router.get('/callers-progress-report', protect, authorize('admin'), getCallersProgressReport);
+router.get('/callers-progress-detail', protect, authorize('admin'), getCallersProgressDetail);
+router.post('/reassign-workload', protect, authorize('admin'), reassignWorkload);
+router.get('/audit-logs', protect, authorize('admin'), getAuditLogs);
+router.get('/system-overview', protect, authorize('admin'), getSystemOverview);
 
 // All user administration modification routes strictly require admin/owner privileges
 router.use(protect, authorize('admin'));

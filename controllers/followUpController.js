@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const mongoose = require('mongoose');
 const FollowUp = require('../models/FollowUp');
@@ -75,12 +80,12 @@ const createFollowUp = asyncHandler(async (req, res) => {
     throw new Error('Valid customerId or customer details (phone, customerName) are required');
   }
 
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
     const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
                        customer.assignedTelecaller === req.user.name;
     if (!isAssigned && customerId) {
       res.status(403);
-      throw new Error('You can only schedule follow-ups for customers assigned to you');
+      throw new Error('Access denied: You can only schedule follow-ups for contacts assigned to you');
     }
   }
 
@@ -89,7 +94,7 @@ const createFollowUp = asyncHandler(async (req, res) => {
   let targetAssignedTo = req.user._id;
   let targetAssignedToName = req.user.name;
 
-  if (assignedTo) {
+  if (isAdminOrOwner(req.user) && assignedTo) {
     const assignedUser = await User.findById(assignedTo);
     if (assignedUser) {
       targetAssignedTo = assignedUser._id;
@@ -138,15 +143,17 @@ const getFollowUps = asyncHandler(async (req, res) => {
   const { status, date, page = 1, limit = 10, telecallerId, customerId, phone } = req.query;
   const conditions = [];
 
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({
       $or: [
         { createdBy: req.user._id },
         { createdByName: req.user.name },
         { assignedTo: req.user._id },
+        { customerId: { $in: customerIds } },
       ],
     });
-  } else if (req.user.role === 'admin' && telecallerId && telecallerId !== 'all') {
+  } else if (isAdminOrOwner(req.user) && telecallerId && telecallerId !== 'all') {
     if (telecallerId === 'unassigned') {
       const unassignedCustIds = await Customer.find({
         $or: [
@@ -212,15 +219,16 @@ const getTodayFollowUps = asyncHandler(async (req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const conditions = [{ date: today, status: 'pending' }];
 
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     conditions.push({
       $or: [
         { createdBy: req.user._id },
+        { assignedTo: req.user._id },
         { customerId: { $in: customerIds } },
       ],
     });
-  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
+  } else if (isAdminOrOwner(req.user) && req.query.telecallerId && req.query.telecallerId !== 'all') {
     if (req.query.telecallerId === 'unassigned') {
       const unassignedCustIds = await Customer.find({
         $or: [
@@ -262,17 +270,20 @@ const updateFollowUp = asyncHandler(async (req, res) => {
     throw new Error('Follow-up not found');
   }
 
-  if (req.user.role === 'telecaller') {
+  if (!isAdminOrOwner(req.user)) {
     const customerIds = await getTelecallerCustomerIds(req.user);
     const hasAccess = String(followUp.createdBy) === String(req.user._id) ||
+                      String(followUp.assignedTo) === String(req.user._id) ||
                       customerIds.some(id => String(id) === String(followUp.customerId));
     if (!hasAccess) {
       res.status(403);
       throw new Error('Access denied to update this follow-up');
     }
+    delete req.body.assignedTo;
+    delete req.body.createdBy;
   }
 
-  if (req.body.assignedTo) {
+  if (isAdminOrOwner(req.user) && req.body.assignedTo) {
     const assignedUser = await User.findById(req.body.assignedTo);
     if (assignedUser) {
       followUp.createdBy = assignedUser._id;
@@ -303,9 +314,13 @@ const deleteFollowUp = asyncHandler(async (req, res) => {
     throw new Error('Follow-up not found');
   }
 
-  if (req.user.role !== 'admin' && String(followUp.createdBy) !== String(req.user._id)) {
-    res.status(403);
-    throw new Error('You can only delete follow-ups you created');
+  if (!isAdminOrOwner(req.user)) {
+    const hasAccess = String(followUp.createdBy) === String(req.user._id) ||
+                      String(followUp.assignedTo) === String(req.user._id);
+    if (!hasAccess) {
+      res.status(403);
+      throw new Error('Access denied: You can only delete follow-ups assigned to or created by you');
+    }
   }
 
   await followUp.deleteOne();

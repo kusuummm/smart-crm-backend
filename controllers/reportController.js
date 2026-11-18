@@ -1,3 +1,8 @@
+const isAdminOrOwner = (user) => {
+  const r = (user?.role || '').toLowerCase();
+  return r === 'admin' || r === 'owner';
+};
+
 const asyncHandler = require('express-async-handler');
 const FollowUp = require('../models/FollowUp');
 const Lead = require('../models/Lead');
@@ -30,9 +35,9 @@ const respondWithReport = async (res, { filename, sheetName, columns, rows, form
 // @route   GET /api/reports/daily-followups?date=YYYY-MM-DD&format=json|excel|csv
 // @access  Private (Telecaller only - strictly isolated)
 const dailyFollowUpReport = asyncHandler(async (req, res) => {
-  if (req.user.role === 'admin') {
+  if (isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Access denied: Administrators cannot access telecaller activity reports');
+    throw new Error('Access denied: Administrators use the executive overview');
   }
 
   const date = req.query.date || new Date().toISOString().split('T')[0];
@@ -68,9 +73,9 @@ const dailyFollowUpReport = asyncHandler(async (req, res) => {
 // @route   GET /api/reports/monthly?year=2026&month=7&format=json|excel|csv
 // @access  Private (Telecaller only - strictly isolated)
 const monthlyReport = asyncHandler(async (req, res) => {
-  if (req.user.role === 'admin') {
+  if (isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Access denied: Administrators cannot access telecaller activity reports');
+    throw new Error('Access denied: Administrators use the executive overview');
   }
 
   const now = new Date();
@@ -120,9 +125,9 @@ const monthlyReport = asyncHandler(async (req, res) => {
 // @route   GET /api/reports/lead-conversion?format=json|excel|csv
 // @access  Private (Telecaller only - strictly isolated)
 const leadConversionReport = asyncHandler(async (req, res) => {
-  if (req.user.role === 'admin') {
+  if (isAdminOrOwner(req.user)) {
     res.status(403);
-    throw new Error('Access denied: Administrators cannot access telecaller conversion reports');
+    throw new Error('Access denied: Administrators use the executive overview');
   }
 
   const format = req.query.format || 'json';
@@ -213,6 +218,10 @@ const telecallerPerformanceReport = asyncHandler(async (req, res) => {
 // @access  Private/Admin
 const getTelecallerReportGraph = asyncHandler(async (req, res) => {
   const { id } = req.params;
+  if (!isAdminOrOwner(req.user) && String(req.user._id) !== String(id)) {
+    res.status(403);
+    throw new Error('Access denied: You can only view your own performance report');
+  }
   const tc = await User.findById(id);
   if (!tc) {
     res.status(404);

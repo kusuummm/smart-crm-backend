@@ -28,7 +28,6 @@ const globalSearch = asyncHandler(async (req, res) => {
   let filter;
   const callerRole = (req.user?.role || '').toLowerCase();
   const isAdminOrOwner = callerRole === 'admin' || callerRole === 'owner';
-  const isManager = callerRole === 'manager';
 
   if (isAdminOrOwner) {
     // Admin/Owner searches unassigned contacts for assignment & distribution
@@ -46,11 +45,8 @@ const globalSearch = asyncHandler(async (req, res) => {
         },
       ],
     };
-  } else if (isManager) {
-    // Managers can search across all contacts to supervise pipelines
-    filter = searchCondition;
   } else {
-    // Telecaller / Staff searches contacts assigned to their account
+    // All desk lead agents / members / staff search strictly contacts assigned to their account
     filter = {
       $and: [
         searchCondition,

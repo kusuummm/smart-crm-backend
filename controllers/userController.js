@@ -186,11 +186,20 @@ const getUsers = asyncHandler(async (req, res) => {
     uObj.isOnline = isOnline;
     uObj.lastActive = lastSessionSeen || u.lastActive || u.updatedAt || u.createdAt;
 
-    if (isOperationalRole(u.role)) {
-      const byId = customerCountMap.get(String(u._id)) || 0;
-      const byName = customerCountMap.get(u.name) || 0;
-      uObj.assignedCustomers = Math.max(byId, byName);
-      uObj.assignedLeads = leadCountMap.get(String(u._id)) || 0;
+    const isCurrentRequester = String(u._id) === String(req.user?._id);
+    const isCallerAdmin = (req.user?.role || '').toLowerCase() === 'admin' || (req.user?.role || '').toLowerCase() === 'owner';
+
+    // Strict Data Isolation: only Admin can see other agents' workload counts. Lead agents see only their own!
+    if (isCallerAdmin || isCurrentRequester) {
+      if (isOperationalRole(u.role)) {
+        const byId = customerCountMap.get(String(u._id)) || 0;
+        const byName = customerCountMap.get(u.name) || 0;
+        uObj.assignedCustomers = Math.max(byId, byName);
+        uObj.assignedLeads = leadCountMap.get(String(u._id)) || 0;
+      } else {
+        uObj.assignedCustomers = 0;
+        uObj.assignedLeads = 0;
+      }
     } else {
       uObj.assignedCustomers = 0;
       uObj.assignedLeads = 0;

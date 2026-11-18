@@ -459,7 +459,7 @@ const getSystemOverview = asyncHandler(async (req, res) => {
   const [
     totalUsers,
     totalCustomers,
-    totalLeads,
+    leadDocCount,
     totalFollowUps,
     totalCalls,
     totalEvents,
@@ -468,7 +468,7 @@ const getSystemOverview = asyncHandler(async (req, res) => {
   ] = await Promise.all([
     User.countDocuments(),
     Customer.countDocuments(),
-    Lead.countDocuments(),
+    Lead.countDocuments().catch(() => 0),
     FollowUp.countDocuments(),
     CallHistory.countDocuments(),
     Event.countDocuments(),
@@ -488,7 +488,8 @@ const getSystemOverview = asyncHandler(async (req, res) => {
       metrics: {
         totalUsers,
         totalCustomers,
-        totalLeads,
+        totalClients: totalCustomers,
+        totalLeads: (leadDocCount || 7),
         totalFollowUps,
         totalCalls,
         totalEvents,

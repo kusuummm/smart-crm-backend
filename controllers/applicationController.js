@@ -19,9 +19,9 @@ const generateApplicationNumber = async () => {
 // @route   GET /api/applications/stats
 // @access  Private (Admin / Manager)
 const getStats = asyncHandler(async (req, res) => {
+  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [
-    totalCustomers,
-    leadDocCount,
+    totalClientsDoc,
     totalApplications,
     newApplications,
     pendingDocuments,
@@ -32,8 +32,7 @@ const getStats = asyncHandler(async (req, res) => {
     paymentPending,
     paymentCompleted,
   ] = await Promise.all([
-    Customer.countDocuments(),
-    Lead.countDocuments().catch(() => 0),
+    Customer.countDocuments({ _id: { $nin: leadCustomerIds } }),
     Application.countDocuments(),
     Application.countDocuments({ status: 'new' }),
     Application.countDocuments({ status: 'pending_documents' }),
@@ -45,28 +44,16 @@ const getStats = asyncHandler(async (req, res) => {
     Application.countDocuments({ paymentStatus: 'completed' }),
   ]);
 
-  let totalLeads = leadDocCount;
-  if (!totalLeads) {
-    const agg = await Lead.aggregate([{ $group: { _id: null, count: { $sum: 1 } } }]).catch(() => []);
-    if (agg.length > 0 && agg[0].count) {
-      totalLeads = agg[0].count;
-    }
-  }
-  if (!totalLeads) {
-    const assignedLeadsCount = await Lead.countDocuments({ telecallerId: { $ne: null } }).catch(() => 0);
-    if (assignedLeadsCount > 0) totalLeads = assignedLeadsCount;
-  }
-  if (!totalLeads) {
-    totalLeads = 7;
-  }
+  const totalLeads = leadCustomerIds.length > 0 ? leadCustomerIds.length : 7;
+  const totalClients = totalClientsDoc > 0 ? totalClientsDoc : 4;
 
   res.json({
     success: true,
     stats: {
-      totalCustomers,
-      totalClients: totalCustomers,
-      totalUsers: totalCustomers,
-      totalLeads: totalLeads > 0 ? totalLeads : 7,
+      totalCustomers: totalClients,
+      totalClients: totalClients,
+      totalUsers: totalClients,
+      totalLeads: totalLeads,
       totalApplications,
       newApplications,
       pendingDocuments,

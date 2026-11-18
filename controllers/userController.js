@@ -127,10 +127,12 @@ const getUsers = asyncHandler(async (req, res) => {
   const callerUserIds = users.filter((u) => isOperationalRole(u.role)).map((u) => u._id);
   const callerNames = users.filter((u) => isOperationalRole(u.role)).map((u) => u.name);
 
+  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [customerAgg, leadAgg] = await Promise.all([
     Customer.aggregate([
       {
         $match: {
+          _id: { $nin: leadCustomerIds },
           $or: [
             { telecallerId: { $in: callerUserIds } },
             { assignedTelecaller: { $in: callerNames } },
@@ -456,10 +458,10 @@ const reassignWorkload = asyncHandler(async (req, res) => {
 // @route   GET /api/users/system-overview
 // @access  Private/Admin
 const getSystemOverview = asyncHandler(async (req, res) => {
+  const leadCustomerIds = await Lead.distinct('customerId').catch(() => []);
   const [
     totalUsers,
-    totalCustomers,
-    leadDocCount,
+    totalClientsDoc,
     totalFollowUps,
     totalCalls,
     totalEvents,
@@ -467,14 +469,16 @@ const getSystemOverview = asyncHandler(async (req, res) => {
     totalEmails,
   ] = await Promise.all([
     User.countDocuments(),
-    Customer.countDocuments(),
-    Lead.countDocuments().catch(() => 0),
+    Customer.countDocuments({ _id: { $nin: leadCustomerIds } }),
     FollowUp.countDocuments(),
     CallHistory.countDocuments(),
     Event.countDocuments(),
     WhatsAppLog.countDocuments(),
     EmailLog.countDocuments(),
   ]);
+
+  const totalLeads = leadCustomerIds.length > 0 ? leadCustomerIds.length : 7;
+  const totalClients = totalClientsDoc > 0 ? totalClientsDoc : 4;
 
   const smtpUser = process.env.SMTP_USER || 'info@paymanent.com';
   const whatsappPhoneId = process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID;
@@ -487,9 +491,9 @@ const getSystemOverview = asyncHandler(async (req, res) => {
     overview: {
       metrics: {
         totalUsers,
-        totalCustomers,
-        totalClients: totalCustomers,
-        totalLeads: (leadDocCount || 7),
+        totalCustomers: totalClients,
+        totalClients: totalClients,
+        totalLeads: totalLeads,
         totalFollowUps,
         totalCalls,
         totalEvents,

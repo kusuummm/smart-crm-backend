@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema(
     role: {
       type: String,
       enum: ['admin', 'telecaller', 'user', 'owner', 'manager', 'member', 'ai_agent', 'Admin', 'Telecaller', 'User', 'Owner', 'Manager', 'Member', 'AI Agent'],
-      default: 'telecaller',
+      default: 'member',
     },
     avatar: { type: String, default: '' }, // initials, e.g. "JS"
     status: { type: String, enum: ['active', 'inactive', 'pending', 'rejected'], default: 'pending' },

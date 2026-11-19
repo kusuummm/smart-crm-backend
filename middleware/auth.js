@@ -24,15 +24,24 @@ const protect = asyncHandler(async (req, res, next) => {
       res.status(401);
       throw new Error('Not authorized, user no longer exists');
     }
-    const isAdmin = ['admin', 'Admin', 'owner', 'Owner'].includes(user.role);
+
+    // Role check: Only admin and member can access the CRM
+    let normalizedRole = (user.role || '').toLowerCase().trim();
+    if (normalizedRole === 'telecaller') normalizedRole = 'member';
+    const isAllowedRole = ['admin', 'owner', 'member'].includes(normalizedRole);
+    if (!isAllowedRole) {
+      res.status(403);
+      throw new Error('Access denied. Only admin and member accounts are authorized to access the CRM.');
+    }
+
+    const isAdmin = ['admin', 'owner'].includes(normalizedRole);
     if (user.status !== 'active' || (!isAdmin && user.isApproved === false)) {
       res.status(403);
       throw new Error('Account is pending administrator approval or disabled. Contact your administrator.');
     }
 
     // Confirm this specific session hasn't been logged out / revoked from
-    // another device. Without this check, "revoke session" would only be
-    // cosmetic - the old token would keep working until it expired.
+    // another device (Single-device policy for Admin enforcement).
     if (decoded.sid) {
       const session = await Session.findOneAndUpdate(
         { tokenId: decoded.sid },
@@ -40,7 +49,10 @@ const protect = asyncHandler(async (req, res, next) => {
       );
       if (!session) {
         res.status(401);
-        throw new Error('Session expired or was signed out from another device. Please log in again.');
+        const reason = isAdmin
+          ? 'Your admin session was signed out because this admin account was logged into from another device. Admin accounts are restricted to one active device only.'
+          : 'Session expired or was signed out from another device. Please log in again.';
+        throw new Error(reason);
       }
       req.sessionId = decoded.sid;
     }
@@ -53,7 +65,9 @@ const protect = asyncHandler(async (req, res, next) => {
     req.user = user;
     next();
   } catch (error) {
-    res.status(401);
+    if (!res.statusCode || res.statusCode === 200) {
+      res.status(401);
+    }
     throw new Error(error.message || 'Not authorized, token invalid or expired');
   }
 });
@@ -79,7 +93,8 @@ const authorize = (...roles) => {
       throw new Error('Not authorized, no user found');
     }
 
-    const userRole = (req.user.role || '').toLowerCase();
+    let userRole = (req.user.role || '').toLowerCase();
+    if (userRole === 'telecaller') userRole = 'member';
     const userLevel = ROLE_HIERARCHY[userRole] || 1;
 
     // Check exact match or hierarchy level
@@ -95,4 +110,3 @@ const authorize = (...roles) => {
 };
 
 module.exports = { protect, authorize, ROLE_HIERARCHY };
-

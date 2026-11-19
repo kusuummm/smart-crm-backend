@@ -24,7 +24,7 @@ const otpSchema = new mongoose.Schema(
       name: { type: String, trim: true },
       password: { type: String },
       phone: { type: String, default: '' },
-      role: { type: String, default: 'telecaller' },
+      role: { type: String, default: 'member' },
     },
     attempts: { type: Number, default: 0 },
     expiresAt: {

@@ -108,6 +108,15 @@ app.use('/api', (req, res, next) => {
 
 // ================= HEALTH CHECK & NETWORK DIAGNOSTIC =================
 
+app.get('/', (req, res) => {
+  res.json({
+    success: true,
+    service: 'Smart CRM Backend API',
+    status: 'online',
+    health: '/api/health',
+  });
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,

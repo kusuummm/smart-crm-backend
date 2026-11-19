@@ -38,7 +38,7 @@ const seed = async () => {
     name: 'John Smith',
     email: 'john@crm.com',
     password: 'john123',
-    role: 'telecaller',
+    role: 'member',
     status: 'active',
     isApproved: true,
   });
@@ -46,7 +46,7 @@ const seed = async () => {
     name: 'Sarah Wilson',
     email: 'sarah@crm.com',
     password: 'sarah123',
-    role: 'telecaller',
+    role: 'member',
     status: 'active',
     isApproved: true,
   });
@@ -54,7 +54,7 @@ const seed = async () => {
     name: 'Mike Johnson',
     email: 'mike@crm.com',
     password: 'mike123',
-    role: 'telecaller',
+    role: 'member',
     status: 'inactive',
   });
 

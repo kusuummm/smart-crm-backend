@@ -11,7 +11,7 @@ const generateToken = require('../utils/generateToken');
 const parseUserAgent = require('../utils/parseUserAgent');
 const sendOtpEmail = require('../utils/sendOtpEmail');
 
-// @desc    Login user (admin or telecaller)
+// @desc    Login user (admin or member)
 // @route   POST /api/auth/login
 // @access  Public
 const login = asyncHandler(async (req, res) => {
@@ -37,7 +37,17 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Invalid credentials');
   }
 
-  const isAdminRole = ['admin', 'Admin', 'owner', 'Owner'].includes(user.role);
+  // Strict CRM Access Control: Only admin and member accounts can access the CRM
+  let normalizedRole = (user.role || '').toLowerCase().trim();
+  if (normalizedRole === 'telecaller') normalizedRole = 'member';
+  const isAllowedRole = ['admin', 'owner', 'member'].includes(normalizedRole);
+
+  if (!isAllowedRole) {
+    res.status(403);
+    throw new Error('Access denied. Only admin and member accounts are authorized to access the CRM.');
+  }
+
+  const isAdminRole = ['admin', 'owner'].includes(normalizedRole);
   if (!isAdminRole && (user.status === 'pending' || user.isApproved === false)) {
     res.status(403);
     throw new Error('Your account is pending administrator approval. Please wait until an admin approves your account.');
@@ -53,10 +63,21 @@ const login = asyncHandler(async (req, res) => {
     throw new Error('Your account is inactive. Please contact the administrator.');
   }
 
+  // SINGLE DEVICE POLICY FOR ADMIN ACCOUNT:
+  // An admin account can be logged into one device only.
+  // Terminate any previous active sessions on other devices before registering the new device.
+  let priorSessionsTerminated = 0;
+  if (isAdminRole) {
+    const delResult = await Session.deleteMany({ user: user._id });
+    priorSessionsTerminated = delResult.deletedCount || 0;
+    if (priorSessionsTerminated > 0) {
+      console.log(`[Single Device Policy] Terminated ${priorSessionsTerminated} previous session(s) for admin: ${user.email}`);
+    }
+  }
+
   const { token, sid } = generateToken(user._id, user.role);
 
-  // Record this login as its own session/device, so the user can see and
-  // manage "where they're logged in" later (see getSessions/revokeSession).
+  // Record this login as its own session/device
   await Session.create({
     user: user._id,
     tokenId: sid,
@@ -72,6 +93,11 @@ const login = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     token,
+    priorSessionsTerminated,
+    singleDeviceEnforced: isAdminRole,
+    message: isAdminRole && priorSessionsTerminated > 0
+      ? 'Signed in successfully. Previous session on other device has been logged out (single active device policy).'
+      : 'Signed in successfully.',
     user: {
       id: user._id,
       name: user.name,
@@ -107,9 +133,7 @@ const getMe = asyncHandler(async (req, res) => {
   res.json({ success: true, user: userData });
 });
 
-// @desc    Update own profile (name, phone). Email/role are intentionally
-//          not editable here - email is the login identifier and role
-//          changes are an admin-only action via /api/users/:id.
+// @desc    Update own profile (name, phone)
 // @route   PUT /api/auth/me
 // @access  Private
 const updateMe = asyncHandler(async (req, res) => {
@@ -123,7 +147,6 @@ const updateMe = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);
   user.name = name.trim();
   if (phone !== undefined) user.phone = phone;
-  // Refresh the initials-based avatar to match the new name.
   user.avatar = user.name.split(' ').map((w) => w[0]).join('').substring(0, 2).toUpperCase();
   await user.save();
 
@@ -161,7 +184,7 @@ const getSessions = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Revoke (sign out) a specific session - e.g. a lost device
+// @desc    Revoke (sign out) a specific session
 // @route   DELETE /api/auth/sessions/:id
 // @access  Private
 const revokeSession = asyncHandler(async (req, res) => {
@@ -207,8 +230,7 @@ const changePassword = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Password updated successfully' });
 });
 
-// @desc    Logout - deletes this device's session record so the token
-//          can no longer be used (see protect() in middleware/auth.js).
+// @desc    Logout
 // @route   POST /api/auth/logout
 // @access  Private
 const logout = asyncHandler(async (req, res) => {
@@ -221,7 +243,7 @@ const logout = asyncHandler(async (req, res) => {
   res.json({ success: true, message: 'Logged out successfully' });
 });
 
-// @desc    Step 1: Request 6-digit OTP for new user registration
+// @desc    Step 1: Request random 6-digit OTP for new member registration
 // @route   POST /api/auth/register/send-otp
 // @access  Public
 const registerSendOtp = asyncHandler(async (req, res) => {
@@ -242,17 +264,13 @@ const registerSendOtp = asyncHandler(async (req, res) => {
 
   const normalizedEmail = email.toLowerCase().trim();
 
-  if (normalizedEmail.endsWith('@crm.com') || normalizedEmail.endsWith('@example.com')) {
-    res.status(400);
-    throw new Error('Please register with your real email address (not a placeholder domain)');
-  }
-
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
     res.status(400);
     throw new Error('An account with this email address already exists. Please log in.');
   }
 
+  // Generate random 6-digit OTP
   const otp = crypto.randomInt(100000, 1000000).toString();
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
@@ -266,10 +284,12 @@ const registerSendOtp = asyncHandler(async (req, res) => {
       name: name.trim(),
       password: hashedPassword,
       phone: phone?.trim() || '',
-      role: 'telecaller',
+      role: 'member',
     },
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   });
+
+  console.log(`\n========================================\n[REGISTRATION OTP] OTP for ${normalizedEmail}: ${otp}\n========================================\n`);
 
   const mailResult = await emailNotificationService.sendVerificationEmail({
     recipientEmail: normalizedEmail,
@@ -286,17 +306,24 @@ const registerSendOtp = asyncHandler(async (req, res) => {
   }
 
   if (!mailResult.success) {
+    if (!process.env.EMAIL_USER) {
+      console.warn(`[OTP Warning] EMAIL_USER is not configured. Registration OTP for ${normalizedEmail} is ${otp}`);
+      return res.json({
+        success: true,
+        message: `Verification code generated: ${otp} (SMTP unconfigured; please configure EMAIL_USER & EMAIL_PASS in Render environment).`,
+      });
+    }
     res.status(502);
     throw new Error(`Failed to dispatch verification email: ${mailResult.error}`);
   }
 
   res.json({
     success: true,
-    message: `6-digit verification code sent to ${normalizedEmail}. Please check your Inbox and Spam folder.`,
+    message: `6-digit verification code sent to ${normalizedEmail}. Please check your inbox and enter the OTP to complete registration.`,
   });
 });
 
-// @desc    Step 2: Verify OTP, create account and log in automatically
+// @desc    Step 2: Verify OTP, and ONLY if OTP matches, register as member
 // @route   POST /api/auth/register/verify-otp
 // @access  Public
 const registerVerifyOtp = asyncHandler(async (req, res) => {
@@ -317,7 +344,7 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
 
   if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
     res.status(400);
-    throw new Error('No active verification code found or code expired. Please request a new code.');
+    throw new Error('No active verification code found or code expired. Please request a new verification code.');
   }
 
   if (pendingOtp.otp !== cleanOtp) {
@@ -325,7 +352,7 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
     if (pendingOtp.attempts >= 5) {
       await Otp.deleteOne({ _id: pendingOtp._id });
       res.status(400);
-      throw new Error('Too many invalid attempts. For your security, this verification code has been invalidated. Please request a new one.');
+      throw new Error('Too many invalid attempts. For your security, this verification code has been invalidated. Please request a new code.');
     }
     await pendingOtp.save();
     res.status(400);
@@ -341,22 +368,43 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
     throw new Error('An account with this email already exists. Please sign in.');
   }
 
+  // Register strictly as member upon successful OTP match
   const user = await User.create({
     name: otpDoc.metadata.name,
     email: normalizedEmail,
     password: otpDoc.metadata.password,
     phone: otpDoc.metadata.phone || '',
-    role: otpDoc.metadata.role || 'telecaller',
-    status: 'pending',
-    isApproved: false,
+    role: 'member',
+    status: 'active',
+    isApproved: true,
   });
 
   await Otp.deleteOne({ _id: otpDoc._id });
 
+  // Issue token and create session for seamless access
+  const { token, sid } = generateToken(user._id, user.role);
+
+  await Session.create({
+    user: user._id,
+    tokenId: sid,
+    userAgent: req.headers['user-agent'] || '',
+    ip: req.ip,
+  });
+
+  user.isOnline = true;
+  user.lastActive = new Date();
+  await user.save();
+
+  emailNotificationService.sendWelcomeEmail({
+    recipientEmail: user.email,
+    recipientName: user.name,
+    userType: 'member',
+  }).catch(() => {});
+
   res.status(201).json({
     success: true,
-    pendingApproval: true,
-    message: 'Registration verified successfully! Your account is pending administrator approval before you can access the system.',
+    message: 'Registration verified and completed successfully! Welcome to Smart CRM.',
+    token,
     user: {
       id: user._id,
       name: user.name,
@@ -365,78 +413,18 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
       avatar: user.avatar,
       status: user.status,
       isApproved: user.isApproved,
-      phone: user.phone,
+      phone: user.phone || '',
+      balance: user.balance || '₹0.0',
     },
   });
 });
 
-// @desc    Direct registration for callers (creates pending account awaiting admin approval)
+// @desc    Direct registration without OTP (Disabled - OTP is strictly required to register)
 // @route   POST /api/auth/register
 // @access  Public
 const register = asyncHandler(async (req, res) => {
-  const { name, email, password, phone } = req.body;
-
-  if (!name || !name.trim()) {
-    res.status(400);
-    throw new Error('Full Name is required');
-  }
-  if (!email || !email.trim() || !email.includes('@')) {
-    res.status(400);
-    throw new Error('A valid email address is required');
-  }
-  if (!password || password.length < 4) {
-    res.status(400);
-    throw new Error('Password must be at least 4 characters');
-  }
-
-  const normalizedEmail = email.toLowerCase().trim();
-  const existingUser = await User.findOne({ email: normalizedEmail });
-  if (existingUser) {
-    res.status(400);
-    throw new Error('An account with this email address already exists. Please sign in.');
-  }
-
-  if (phone && phone.trim()) {
-    const cleanPhone = phone.trim().replace(/\D/g, '').slice(-10);
-    if (cleanPhone && cleanPhone.length >= 10) {
-      const existingPhone = await User.findOne({
-        $or: [
-          { phone: phone.trim() },
-          { phone: new RegExp(cleanPhone + '$') },
-        ],
-      });
-      if (existingPhone) {
-        res.status(400);
-        throw new Error('An account with this phone number already exists.');
-      }
-    }
-  }
-
-  const user = await User.create({
-    name: name.trim(),
-    email: normalizedEmail,
-    password,
-    phone: phone ? phone.trim() : '',
-    role: 'telecaller',
-    status: 'pending',
-    isApproved: false,
-  });
-
-  res.status(201).json({
-    success: true,
-    pendingApproval: true,
-    message: 'Registration submitted successfully! Your account is pending administrator approval before you can access the system.',
-    user: {
-      id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      avatar: user.avatar,
-      status: user.status,
-      isApproved: user.isApproved,
-      phone: user.phone,
-    },
-  });
+  res.status(400);
+  throw new Error('Direct registration is disabled. An OTP must be sent to your email and verified to register as a member.');
 });
 
 // @desc    Step 1: Request OTP for password reset (Forgot Password)
@@ -458,6 +446,14 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     throw new Error('No account found with this email address');
   }
 
+  // CRM Access check
+  let normalizedRole = (user.role || '').toLowerCase().trim();
+  if (normalizedRole === 'telecaller') normalizedRole = 'member';
+  if (!['admin', 'owner', 'member'].includes(normalizedRole)) {
+    res.status(403);
+    throw new Error('Access denied. Only admin and member accounts are authorized to access the CRM.');
+  }
+
   if (user.status !== 'active') {
     res.status(403);
     throw new Error('Account is deactivated. Please contact an administrator.');
@@ -472,6 +468,8 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     purpose: 'forgot_password',
     expiresAt: new Date(Date.now() + 10 * 60 * 1000),
   });
+
+  console.log(`\n========================================\n[FORGOT PASSWORD OTP] Code for ${normalizedEmail}: ${otp}\n========================================\n`);
 
   const mailResult = await emailNotificationService.sendPasswordResetEmail({
     recipientEmail: normalizedEmail,
@@ -488,6 +486,13 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
   }
 
   if (!mailResult.success) {
+    if (!process.env.EMAIL_USER) {
+      console.warn(`[OTP Warning] EMAIL_USER is not configured. Reset code for ${normalizedEmail} is ${otp}`);
+      return res.json({
+        success: true,
+        message: `Password reset code generated: ${otp} (SMTP unconfigured; please configure EMAIL_USER & EMAIL_PASS in Render environment).`,
+      });
+    }
     res.status(502);
     throw new Error(`Failed to dispatch reset code: ${mailResult.error}`);
   }
@@ -524,7 +529,7 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
 
   if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
     res.status(400);
-    throw new Error('No active reset code found or code expired. Please request a new code.');
+    throw new Error('Reset code expired or not found. Please request a new one.');
   }
 
   if (pendingOtp.otp !== cleanOtp) {
@@ -547,6 +552,14 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  // CRM Access check
+  let normalizedRole = (user.role || '').toLowerCase().trim();
+  if (normalizedRole === 'telecaller') normalizedRole = 'member';
+  if (!['admin', 'owner', 'member'].includes(normalizedRole)) {
+    res.status(403);
+    throw new Error('Access denied. Only admin and member accounts are authorized to access the CRM.');
+  }
+
   if (user.status === 'pending' || user.isApproved === false) {
     res.status(403);
     throw new Error('Your account is pending administrator approval. Please wait until an admin approves your account.');
@@ -562,12 +575,18 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
     throw new Error('Your account is inactive. Please contact the administrator.');
   }
 
+  const isAdminRole = ['admin', 'owner'].includes(normalizedRole);
+  // Single-device policy for admin account
+  if (isAdminRole) {
+    await Session.deleteMany({ user: user._id });
+  }
+
   user.password = newPassword;
   await user.save();
 
   await Otp.deleteOne({ _id: otpDoc._id });
 
-  // Issue new session and log in user directly with their new password
+  // Issue new session and log in user directly
   const { token, sid } = generateToken(user._id, user.role);
 
   await Session.create({

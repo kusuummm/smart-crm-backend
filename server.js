@@ -36,7 +36,14 @@ const { seedDefaultAutomations } = require('./services/automationService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 const { generalLimiter } = require('./middleware/rateLimiter');
 
-connectDB();
+connectDB().then(async () => {
+  try {
+    const { seedInitialDataIfEmpty } = require('./services/initialSeedService');
+    await seedInitialDataIfEmpty();
+  } catch (seedErr) {
+    console.warn('[InitialSeed] Startup check notice:', seedErr.message);
+  }
+});
 seedDefaultAutomations();
 
 const app = express();

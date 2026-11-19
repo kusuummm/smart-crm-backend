@@ -1,5 +1,7 @@
 const express = require('express');
 const router = express.Router();
+const asyncHandler = require('express-async-handler');
+const { seedDemoData } = require('../services/initialSeedService');
 const {
   createUser,
   getUsers,
@@ -31,6 +33,14 @@ router.get('/callers-progress-detail', protect, authorize('admin'), getCallersPr
 router.post('/reassign-workload', protect, authorize('admin'), reassignWorkload);
 router.get('/audit-logs', protect, authorize('admin'), getAuditLogs);
 router.get('/system-overview', protect, authorize('admin'), getSystemOverview);
+router.post('/seed-data', protect, authorize('admin'), asyncHandler(async (req, res) => {
+  const result = await seedDemoData();
+  res.json({
+    success: true,
+    message: 'Starter clients, pipeline leads, and sample applications populated successfully!',
+    result,
+  });
+}));
 
 // All user administration modification routes strictly require admin/owner privileges
 router.use(protect, authorize('admin'));

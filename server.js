@@ -32,6 +32,8 @@ const meetingRoutes = require('./routes/meetingRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 const automationRoutes = require('./routes/automationRoutes');
 const eodRoutes = require('./routes/eodRoutes');
+const teamRoutes = require('./routes/teamRoutes');
+const settingsRoutes = require('./routes/settingsRoutes');
 const { seedDefaultAutomations } = require('./services/automationService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 const { generalLimiter } = require('./middleware/rateLimiter');
@@ -236,6 +238,12 @@ app.use(['/api/automations', '/automations'], automationRoutes);
 
 // End of Day (EOD) Sheet & Daily Submissions
 app.use(['/api/eod', '/eod'], eodRoutes);
+
+// Teams Management (Persisted in MongoDB)
+app.use(['/api/teams', '/teams'], teamRoutes);
+
+// Workspace & Call Recording Preferences (Persisted in MongoDB)
+app.use(['/api/settings', '/settings'], settingsRoutes);
 
 // Protected uploads directory - verifies authentication to guard KYC documents & certificates
 const jwt = require('jsonwebtoken');

@@ -143,17 +143,7 @@ const getFollowUps = asyncHandler(async (req, res) => {
   const { status, date, page = 1, limit = 10, telecallerId, customerId, phone } = req.query;
   const conditions = [];
 
-  if (!isAdminOrOwner(req.user)) {
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    conditions.push({
-      $or: [
-        { createdBy: req.user._id },
-        { createdByName: req.user.name },
-        { assignedTo: req.user._id },
-        { customerId: { $in: customerIds } },
-      ],
-    });
-  } else if (isAdminOrOwner(req.user) && telecallerId && telecallerId !== 'all') {
+  if (telecallerId && telecallerId !== 'all') {
     if (telecallerId === 'unassigned') {
       const unassignedCustIds = await Customer.find({
         $or: [

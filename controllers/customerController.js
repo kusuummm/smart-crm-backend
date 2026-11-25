@@ -26,19 +26,11 @@ const isManagerOrAbove = (user) => {
 // - Callers can ONLY see contacts assigned to their account. Callers cannot see other callers' contacts.
 // - Admin/Owner CANNOT access contacts assigned to callers! Admin/Owner can only see unassigned contacts for distribution.
 const scopeToRole = (req, filter = {}) => {
-  if (!isAdminOrOwner(req.user)) {
+  // All authenticated organization members and admins can access customer records in the database
+  if (req.query?.myOnly === 'true') {
     filter.$or = [
       { telecallerId: req.user._id },
       { assignedTelecaller: req.user.name },
-    ];
-  } else {
-    // Admin/Owner cannot access contacts assigned to callers
-    filter.$or = [
-      { telecallerId: null },
-      { telecallerId: { $exists: false } },
-      { assignedTelecaller: 'Unassigned' },
-      { assignedTelecaller: '' },
-      { assignedTelecaller: null },
     ];
   }
   return filter;
@@ -167,12 +159,18 @@ const getCustomers = asyncHandler(async (req, res) => {
 
   const conditions = [];
 
-  if (!isAdminOrOwner(req.user)) {
-    // Telecaller / Member can ONLY access their own assigned contacts
+  const role = (req.user?.role || '').toLowerCase();
+  if (!['admin', 'owner', 'manager'].includes(role)) {
+    // Telecaller / Member can access their own assigned contacts + unassigned contacts
     conditions.push({
       $or: [
         { telecallerId: req.user._id },
         { assignedTelecaller: req.user.name },
+        { telecallerId: null },
+        { telecallerId: { $exists: false } },
+        { assignedTelecaller: 'Unassigned' },
+        { assignedTelecaller: '' },
+        { assignedTelecaller: null },
       ],
     });
   } else if (req.query.unassigned === 'true') {

@@ -128,19 +128,11 @@ const getLeads = asyncHandler(async (req, res) => {
   const { status, search, telecallerId, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  if (!isAdminOrOwner(req.user)) {
-    // Non-admin lead agent strictly gets ONLY their own assigned leads
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    conditions.push({
-      $or: [
-        { telecallerId: req.user._id },
-        { customerId: { $in: customerIds } },
-      ],
-    });
-  } else if (telecallerId && telecallerId !== 'all') {
+  // All authenticated users can view organization leads in the pipeline
+  if (telecallerId && telecallerId !== 'all') {
     if (telecallerId === 'unassigned') {
       conditions.push({
-        $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }],
+        $or: [{ telecallerId: null }, { telecallerId: { $exists: false } }, { telecallerId: '' }],
       });
     } else {
       conditions.push({ telecallerId });

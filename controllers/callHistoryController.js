@@ -71,15 +71,11 @@ const createCall = asyncHandler(async (req, res) => {
     throw new Error('customerId or customerPhone is required');
   }
 
-  const callerRole = (req.user?.role || '').toLowerCase();
-  if (!['admin', 'owner', 'manager'].includes(callerRole)) {
-    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
-                       customer.assignedTelecaller === req.user.name;
-    if (!isAssigned && customerId) {
-      // Allow self-logging if created on the fly
-      res.status(403);
-      throw new Error('You can only log calls for customers assigned to you');
-    }
+  // Allow any authenticated staff or admin to log calls directly into database
+  if (!customer.telecallerId) {
+    customer.telecallerId = req.user._id;
+    customer.assignedTelecaller = req.user.name;
+    await customer.save().catch(() => {});
   }
 
   const call = await CallHistory.create({
@@ -123,8 +119,17 @@ const getCalls = asyncHandler(async (req, res) => {
   const { status, date, customerId, customerPhone, phone, page = 1, limit = 10 } = req.query;
   const conditions = [];
 
-  // Strict isolation: Telecaller only sees their own calls; Admin cannot access callers' calls or recordings!
-  conditions.push({ calledBy: req.user._id });
+  // Support explicit caller filtering if requested
+  const { callerId, staff, myCalls } = req.query;
+  if (myCalls === 'true') {
+    conditions.push({
+      $or: [{ calledBy: req.user._id }, { calledByName: req.user.name }],
+    });
+  } else if (callerId && callerId !== 'all') {
+    conditions.push({ calledBy: callerId });
+  } else if (staff && staff !== 'All staff' && staff !== 'All Staff') {
+    conditions.push({ calledByName: staff });
+  }
 
   if (status) conditions.push({ status });
   if (date) conditions.push({ date });

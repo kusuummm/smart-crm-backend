@@ -7,7 +7,14 @@ const Customer = require('../models/Customer');
 // @access  Private
 const getNotes = asyncHandler(async (req, res) => {
   const { search, customer, staff, team } = req.query;
-  const filter = { createdBy: req.user._id };
+  const role = (req.user?.role || '').toLowerCase();
+  const filter = {};
+  if (req.query?.myOnly === 'true') {
+    filter.$or = [
+      { createdBy: req.user._id },
+      { createdByName: req.user.name },
+    ];
+  }
 
   if (team && team !== 'All teams') {
     filter.teamName = team;

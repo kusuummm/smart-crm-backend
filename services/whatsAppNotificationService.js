@@ -28,8 +28,8 @@ const {
   loadDbConfig,
 } = require('../utils/sendWhatsApp');
 
-const BRAND_NAME = 'PeYug';
-const ORG_NAME = 'THE JINL COOPERATIVE MULTIPURPOSE SOCIETY LIMITED';
+const BRAND_NAME = process.env.BRAND_NAME || process.env.APP_NAME || 'Smart CRM';
+const ORG_NAME = process.env.ORG_NAME || 'Smart CRM Business Services';
 const PORTAL_URL = process.env.CLIENT_URL ? process.env.CLIENT_URL.split(',')[0].trim() : 'https://peyug.in';
 
 /**

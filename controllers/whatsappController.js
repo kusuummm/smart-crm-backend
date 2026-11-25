@@ -21,6 +21,7 @@ const {
   getPhoneId,
   setRuntimeWhatsAppConfig,
   verifyMetaConnection,
+  autoDiscoverMetaContact,
   PEYUG_OFFICIAL_TEMPLATES,
   getTemplateDetails,
 } = require('../utils/sendWhatsApp');
@@ -712,27 +713,73 @@ const receiveWebhook = (req, res) => {
   });
 };
 
+// @desc    Auto-discover WhatsApp Phone Number & WABA details from Meta Access Token
+// @route   POST /api/whatsapp/auto-discover
+// @access  Private/Admin
+const autoDiscoverContact = asyncHandler(async (req, res) => {
+  const { token, phoneId, wabaId } = req.body || {};
+  await loadDbConfig();
+  const activeToken = (token || getToken() || '').trim();
+
+  if (!activeToken) {
+    res.status(400);
+    throw new Error('Access token is required to auto-discover WhatsApp contact details');
+  }
+
+  const result = await autoDiscoverMetaContact(activeToken, phoneId, wabaId);
+  if (!result.success) {
+    return res.status(400).json({
+      success: false,
+      message: result.error || 'Failed to discover WhatsApp contact details from token',
+    });
+  }
+
+  res.json({
+    success: true,
+    message: `Discovered active WhatsApp contact: ${result.displayPhoneNumber || result.phoneNumberId} (${result.verifiedName || 'WhatsApp Business'})`,
+    ...result,
+  });
+});
+
 // @desc    Get WhatsApp API Configuration
 // @route   GET /api/whatsapp/config
 // @access  Private/Admin
 const getConfig = asyncHandler(async (req, res) => {
-  await loadDbConfig();
+  const dbConfig = await loadDbConfig();
   const token = getToken() || '';
-  const phoneId = getPhoneId() || '';
-  const wabaId = process.env.WHATSAPP_WABA_ID || '';
+  let phoneId = getPhoneId() || '';
+  let wabaId = dbConfig?.wabaId || process.env.WHATSAPP_WABA_ID || '';
 
   const maskedToken = token.length > 8
     ? `${token.substring(0, 6)}••••••••${token.substring(token.length - 4)}`
     : (token ? '••••••••' : '');
 
-  let verifiedName = '';
-  let displayPhoneNumber = '';
-  if (token && phoneId) {
+  let verifiedName = dbConfig?.verifiedName || '';
+  let displayPhoneNumber = dbConfig?.displayPhoneNumber || '';
+
+  // If token is present but phoneId is not yet resolved, attempt auto-discovery
+  if (token && !phoneId) {
+    try {
+      const disc = await autoDiscoverMetaContact(token);
+      if (disc.success && disc.phoneNumberId) {
+        phoneId = disc.phoneNumberId;
+        verifiedName = disc.verifiedName || verifiedName;
+        displayPhoneNumber = disc.displayPhoneNumber || displayPhoneNumber;
+        wabaId = disc.wabaId || wabaId;
+        setRuntimeWhatsAppConfig({
+          phoneNumberId: disc.phoneNumberId,
+          displayPhoneNumber: disc.displayPhoneNumber,
+          verifiedName: disc.verifiedName,
+          wabaId: disc.wabaId,
+        });
+      }
+    } catch (_) {}
+  } else if (token && phoneId && (!verifiedName || !displayPhoneNumber)) {
     try {
       const ver = await verifyMetaConnection(token, phoneId);
       if (ver.connected) {
-        verifiedName = ver.verifiedName || '';
-        displayPhoneNumber = ver.displayPhoneNumber || '';
+        verifiedName = ver.verifiedName || verifiedName;
+        displayPhoneNumber = ver.displayPhoneNumber || displayPhoneNumber;
       }
     } catch (_) {}
   }
@@ -756,16 +803,40 @@ const getConfig = asyncHandler(async (req, res) => {
 // @route   PUT /api/whatsapp/config
 // @access  Private/Admin
 const updateConfig = asyncHandler(async (req, res) => {
-  const { accessToken, phoneNumberId, wabaId } = req.body;
+  const { accessToken, phoneNumberId, wabaId, autoDetect = true } = req.body;
   const SystemConfig = require('../models/SystemConfig');
 
   let current = await SystemConfig.findOne({ key: 'whatsapp_config' });
   const existingVal = current?.value || {};
 
+  const cleanToken = accessToken !== undefined ? accessToken.trim() : (existingVal.accessToken || '');
+  let cleanPhoneId = phoneNumberId !== undefined ? phoneNumberId.trim() : (existingVal.phoneNumberId || '');
+  let cleanWabaId = wabaId !== undefined ? wabaId.trim() : (existingVal.wabaId || '');
+
+  let discoveredDetails = null;
+
+  // If token is provided, and either phone ID is missing OR token changed, auto-discover
+  const isNewToken = Boolean(cleanToken && cleanToken !== existingVal.accessToken);
+  if (cleanToken && (isNewToken || !cleanPhoneId) && autoDetect) {
+    try {
+      const disc = await autoDiscoverMetaContact(cleanToken, cleanPhoneId, cleanWabaId);
+      if (disc.success) {
+        discoveredDetails = disc;
+        if (disc.phoneNumberId) cleanPhoneId = disc.phoneNumberId;
+        if (disc.wabaId) cleanWabaId = disc.wabaId;
+      }
+    } catch (err) {
+      console.warn('Auto-discovery during updateConfig failed:', err.message);
+    }
+  }
+
   const updatedVal = {
-    accessToken: accessToken !== undefined ? accessToken.trim() : existingVal.accessToken,
-    phoneNumberId: phoneNumberId !== undefined ? phoneNumberId.trim() : existingVal.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID,
-    wabaId: wabaId !== undefined ? wabaId.trim() : existingVal.wabaId || process.env.WHATSAPP_WABA_ID,
+    accessToken: cleanToken,
+    phoneNumberId: cleanPhoneId,
+    wabaId: cleanWabaId,
+    displayPhoneNumber: discoveredDetails?.displayPhoneNumber || existingVal.displayPhoneNumber || '',
+    verifiedName: discoveredDetails?.verifiedName || existingVal.verifiedName || '',
+    updatedAt: new Date(),
   };
 
   await SystemConfig.findOneAndUpdate(
@@ -778,10 +849,14 @@ const updateConfig = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    message: 'WhatsApp API credentials updated successfully. Messages will now send from your registered company number.',
+    message: updatedVal.displayPhoneNumber
+      ? `WhatsApp API updated and connected to ${updatedVal.displayPhoneNumber} (${updatedVal.verifiedName || 'WhatsApp Business'})!`
+      : 'WhatsApp API credentials updated successfully.',
     isConfigured: Boolean(updatedVal.accessToken && updatedVal.phoneNumberId),
     phoneNumberId: updatedVal.phoneNumberId,
     wabaId: updatedVal.wabaId,
+    displayPhoneNumber: updatedVal.displayPhoneNumber,
+    verifiedName: updatedVal.verifiedName,
   });
 });
 
@@ -811,9 +886,9 @@ const testConnection = asyncHandler(async (req, res) => {
 // @route   GET /api/whatsapp/templates
 // @access  Private
 const getLiveTemplates = asyncHandler(async (req, res) => {
-  await loadDbConfig();
+  const dbConfig = await loadDbConfig();
   const token = getToken();
-  const wabaId = process.env.WHATSAPP_WABA_ID || '1604281820561116';
+  const wabaId = dbConfig?.wabaId || process.env.WHATSAPP_WABA_ID || '';
 
   let liveTemplates = [];
   if (token && wabaId) {
@@ -880,9 +955,9 @@ const createMetaTemplate = asyncHandler(async (req, res) => {
   }
 
   const cleanName = name.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-  await loadDbConfig();
+  const dbConfig = await loadDbConfig();
   const token = getToken();
-  const wabaId = process.env.WHATSAPP_WABA_ID || '1604281820561116';
+  const wabaId = dbConfig?.wabaId || process.env.WHATSAPP_WABA_ID || '';
 
   if (!token || !wabaId) {
     res.status(400);
@@ -974,6 +1049,7 @@ module.exports = {
   getConfig,
   updateConfig,
   testConnection,
+  autoDiscoverContact,
   getLiveTemplates,
   createMetaTemplate,
   getDeviceStatus,

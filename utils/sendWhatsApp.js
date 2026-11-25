@@ -3,31 +3,239 @@ const axios = require('axios');
 
 let cachedDbConfig = null;
 
-const DEFAULT_PHONE_ID = '1408768628982301';
-const DEFAULT_WABA_ID = '1604281820561116';
+// Dynamic defaults from environment (no hardcoded credentials)
+const getEnvPhoneId = () => process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || '';
+const getEnvWabaId = () => process.env.WHATSAPP_WABA_ID || process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || '';
+const getEnvToken = () => process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
+
+/**
+ * Auto-discover WhatsApp Business Phone Number ID and account details using Meta Graph API.
+ * Given only an access token, it automatically queries assigned WABAs and phone numbers.
+ */
+const autoDiscoverMetaContact = async (tokenOverride, phoneIdOverride, wabaIdOverride) => {
+  const token = (tokenOverride || getToken() || '').trim();
+  const phoneId = (phoneIdOverride || '').trim();
+  const wabaId = (wabaIdOverride || '').trim();
+
+  if (!token) {
+    return {
+      success: false,
+      error: 'WhatsApp Access Token is required to discover contact details',
+    };
+  }
+
+  const version = process.env.WHATSAPP_API_VERSION || 'v23.0';
+  const headers = { Authorization: `Bearer ${token}` };
+
+  // 1. If a specific phoneId is provided or configured, query it directly
+  if (phoneId) {
+    try {
+      const { data } = await axios.get(`https://graph.facebook.com/${version}/${phoneId}`, {
+        headers,
+        params: { fields: 'id,verified_name,display_phone_number,quality_rating,code_verification_status,whatsapp_business_account' },
+        timeout: 10000,
+      });
+      return {
+        success: true,
+        phoneNumberId: data.id || phoneId,
+        displayPhoneNumber: data.display_phone_number || '',
+        verifiedName: data.verified_name || '',
+        qualityRating: data.quality_rating || '',
+        verificationStatus: data.code_verification_status || '',
+        wabaId: data.whatsapp_business_account?.id || wabaId || '',
+        allNumbers: [
+          {
+            id: data.id || phoneId,
+            displayPhoneNumber: data.display_phone_number || '',
+            verifiedName: data.verified_name || '',
+            qualityRating: data.quality_rating || '',
+          },
+        ],
+      };
+    } catch (_) {
+      // Continue to broader discovery if direct lookup fails
+    }
+  }
+
+  const collectedNumbers = [];
+  let discoveredWabaId = wabaId || getEnvWabaId();
+
+  // 2. Query assigned WhatsApp Business Accounts for this token
+  try {
+    const { data } = await axios.get(
+      `https://graph.facebook.com/${version}/me/assigned_whatsapp_business_accounts`,
+      {
+        headers,
+        params: {
+          fields: 'id,name,phone_numbers{id,display_phone_number,verified_name,code_verification_status,quality_rating}',
+          limit: 25,
+        },
+        timeout: 10000,
+      }
+    );
+
+    if (data?.data && Array.isArray(data.data)) {
+      for (const account of data.data) {
+        if (!discoveredWabaId && account.id) {
+          discoveredWabaId = account.id;
+        }
+        const nums = account.phone_numbers?.data || [];
+        for (const n of nums) {
+          collectedNumbers.push({
+            id: n.id,
+            displayPhoneNumber: n.display_phone_number || '',
+            verifiedName: n.verified_name || account.name || '',
+            qualityRating: n.quality_rating || '',
+            verificationStatus: n.code_verification_status || '',
+            wabaId: account.id,
+            wabaName: account.name || '',
+          });
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 3. If no numbers found yet, and we have a wabaId, query WABA phone_numbers directly
+  if (collectedNumbers.length === 0 && discoveredWabaId) {
+    try {
+      const { data } = await axios.get(
+        `https://graph.facebook.com/${version}/${discoveredWabaId}/phone_numbers`,
+        {
+          headers,
+          params: { fields: 'id,display_phone_number,verified_name,code_verification_status,quality_rating' },
+          timeout: 10000,
+        }
+      );
+      if (data?.data && Array.isArray(data.data)) {
+        for (const n of data.data) {
+          collectedNumbers.push({
+            id: n.id,
+            displayPhoneNumber: n.display_phone_number || '',
+            verifiedName: n.verified_name || '',
+            qualityRating: n.quality_rating || '',
+            verificationStatus: n.code_verification_status || '',
+            wabaId: discoveredWabaId,
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 4. If still no numbers, try businesses owned WABA accounts
+  if (collectedNumbers.length === 0) {
+    try {
+      const { data } = await axios.get(
+        `https://graph.facebook.com/${version}/me/businesses`,
+        {
+          headers,
+          params: {
+            fields: 'id,name,owned_whatsapp_business_accounts{id,name,phone_numbers{id,display_phone_number,verified_name}}',
+          },
+          timeout: 10000,
+        }
+      );
+      if (data?.data && Array.isArray(data.data)) {
+        for (const biz of data.data) {
+          const wabas = biz.owned_whatsapp_business_accounts?.data || [];
+          for (const w of wabas) {
+            if (!discoveredWabaId) discoveredWabaId = w.id;
+            const nums = w.phone_numbers?.data || [];
+            for (const n of nums) {
+              collectedNumbers.push({
+                id: n.id,
+                displayPhoneNumber: n.display_phone_number || '',
+                verifiedName: n.verified_name || w.name || biz.name || '',
+                wabaId: w.id,
+              });
+            }
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  if (collectedNumbers.length > 0) {
+    const primary = collectedNumbers[0];
+    return {
+      success: true,
+      phoneNumberId: primary.id,
+      displayPhoneNumber: primary.displayPhoneNumber,
+      verifiedName: primary.verifiedName,
+      qualityRating: primary.qualityRating,
+      verificationStatus: primary.verificationStatus,
+      wabaId: primary.wabaId || discoveredWabaId,
+      allNumbers: collectedNumbers,
+    };
+  }
+
+  return {
+    success: false,
+    error: 'No WhatsApp Business phone numbers found associated with this token. Please ensure the token has whatsapp_business_messaging permissions in Meta Business Manager.',
+    wabaId: discoveredWabaId || undefined,
+  };
+};
 
 const loadDbConfig = async () => {
-  if (cachedDbConfig !== null) return cachedDbConfig;
+  const envToken = getEnvToken();
+  const envPhoneId = getEnvPhoneId();
+  const envWabaId = getEnvWabaId();
+
+  if (cachedDbConfig !== null) {
+    // Check if process.env.WHATSAPP_ACCESS_TOKEN was changed externally
+    if (envToken && cachedDbConfig.envTokenTracked && cachedDbConfig.envTokenTracked !== envToken) {
+      cachedDbConfig = null; // force reload and sync
+    } else {
+      return cachedDbConfig;
+    }
+  }
+
   try {
     if (mongoose.connection.readyState !== 1) {
-      cachedDbConfig = {};
+      cachedDbConfig = {
+        accessToken: envToken,
+        phoneNumberId: envPhoneId,
+        wabaId: envWabaId,
+        envTokenTracked: envToken,
+      };
       return cachedDbConfig;
     }
     const SystemConfig = require('../models/SystemConfig');
     const doc = await SystemConfig.findOne({ key: 'whatsapp_config' }).maxTimeMS(2000);
     if (doc?.value) {
-      cachedDbConfig = doc.value;
-      if (cachedDbConfig.accessToken && !process.env.WHATSAPP_ACCESS_TOKEN) {
-        process.env.WHATSAPP_ACCESS_TOKEN = cachedDbConfig.accessToken;
-      }
-      if (cachedDbConfig.phoneNumberId && !process.env.WHATSAPP_PHONE_NUMBER_ID) {
-        process.env.WHATSAPP_PHONE_NUMBER_ID = cachedDbConfig.phoneNumberId;
+      cachedDbConfig = { ...doc.value };
+
+      // If envToken is set and differs from what was previously synced from env, adopt env token
+      if (envToken && cachedDbConfig.envTokenTracked !== envToken) {
+        cachedDbConfig.accessToken = envToken;
+        cachedDbConfig.envTokenTracked = envToken;
+        if (envPhoneId) {
+          cachedDbConfig.phoneNumberId = envPhoneId;
+        } else {
+          // Invalidate stale phone ID belonging to old token so it auto-discovers
+          delete cachedDbConfig.phoneNumberId;
+          delete cachedDbConfig.displayPhoneNumber;
+          delete cachedDbConfig.verifiedName;
+        }
+        if (envWabaId) cachedDbConfig.wabaId = envWabaId;
+
+        // Asynchronously update in background
+        SystemConfig.updateOne({ key: 'whatsapp_config' }, { value: cachedDbConfig }, { upsert: true }).catch(() => {});
       }
     } else {
-      cachedDbConfig = {};
+      cachedDbConfig = {
+        accessToken: envToken,
+        phoneNumberId: envPhoneId,
+        wabaId: envWabaId,
+        envTokenTracked: envToken,
+      };
     }
   } catch (_) {
-    cachedDbConfig = {};
+    cachedDbConfig = {
+      accessToken: envToken,
+      phoneNumberId: envPhoneId,
+      wabaId: envWabaId,
+      envTokenTracked: envToken,
+    };
   }
   return cachedDbConfig;
 };
@@ -39,22 +247,41 @@ const setRuntimeWhatsAppConfig = (cfg) => {
   if (cfg.wabaId) process.env.WHATSAPP_WABA_ID = cfg.wabaId;
 };
 
-const getToken = () => cachedDbConfig?.accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN || '';
-const getPhoneId = () => cachedDbConfig?.phoneNumberId || process.env.WHATSAPP_PHONE_NUMBER_ID || process.env.WHATSAPP_PHONE_ID || DEFAULT_PHONE_ID;
+const getToken = () => (cachedDbConfig?.accessToken || getEnvToken() || '').trim();
+const getPhoneId = () => (cachedDbConfig?.phoneNumberId || getEnvPhoneId() || '').trim();
 
 /**
- * Verify Meta Cloud API connection directly with Graph API
+ * Verify Meta Cloud API connection directly with Graph API.
+ * If phoneId is omitted, automatically discovers it from the token.
  */
 const verifyMetaConnection = async (tokenOverride, phoneIdOverride) => {
   await loadDbConfig();
-  const token = tokenOverride || getToken();
-  const phoneId = phoneIdOverride || getPhoneId();
+  const token = (tokenOverride || getToken() || '').trim();
+  let phoneId = (phoneIdOverride || getPhoneId() || '').trim();
 
-  if (!token || !phoneId) {
+  if (!token) {
     return {
       connected: false,
-      error: 'WhatsApp Access Token or Phone Number ID is missing',
+      error: 'WhatsApp Access Token is missing',
     };
+  }
+
+  // If phoneId is missing, attempt auto-discovery from token
+  if (!phoneId) {
+    const disc = await autoDiscoverMetaContact(token);
+    if (!disc.success || !disc.phoneNumberId) {
+      return {
+        connected: false,
+        error: disc.error || 'Could not find a WhatsApp Phone Number ID linked to this token',
+      };
+    }
+    phoneId = disc.phoneNumberId;
+    setRuntimeWhatsAppConfig({
+      phoneNumberId: disc.phoneNumberId,
+      displayPhoneNumber: disc.displayPhoneNumber,
+      verifiedName: disc.verifiedName,
+      wabaId: disc.wabaId,
+    });
   }
 
   try {
@@ -62,6 +289,7 @@ const verifyMetaConnection = async (tokenOverride, phoneIdOverride) => {
     const { data } = await axios.get(`https://graph.facebook.com/${version}/${phoneId}`, {
       headers: { Authorization: `Bearer ${token}` },
       params: { fields: 'verified_name,display_phone_number,quality_rating,code_verification_status' },
+      timeout: 10000,
     });
     return {
       connected: true,
@@ -457,8 +685,9 @@ const getTemplateDetails = (templateName) => {
 // service window (i.e. after the customer has messaged you recently).
 // For the first outbound message to a customer, use sendWhatsAppTemplate instead.
 const sendWhatsAppText = async ({ to, message, text }) => {
+  await loadDbConfig();
   const token = getToken();
-  const phoneId = getPhoneId();
+  let phoneId = getPhoneId();
   const cleanTo = cleanPhoneNumber(to);
   const messageBody = (message || text || '').trim();
 
@@ -470,11 +699,27 @@ const sendWhatsAppText = async ({ to, message, text }) => {
     return { success: false, error: 'Message body cannot be empty' };
   }
 
+  // If token is configured but phoneId not yet resolved, attempt dynamic auto-discovery
+  if (token && !phoneId) {
+    try {
+      const disc = await autoDiscoverMetaContact(token);
+      if (disc.success && disc.phoneNumberId) {
+        phoneId = disc.phoneNumberId;
+        setRuntimeWhatsAppConfig({
+          phoneNumberId: disc.phoneNumberId,
+          displayPhoneNumber: disc.displayPhoneNumber,
+          verifiedName: disc.verifiedName,
+          wabaId: disc.wabaId,
+        });
+      }
+    } catch (_) {}
+  }
+
   if (!token || !phoneId) {
     return {
       success: false,
       isConfigured: false,
-      error: 'WhatsApp credentials (WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID) are not configured in .env',
+      error: 'WhatsApp credentials (WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID) are not configured or contact could not be resolved',
       waLink: getWhatsAppWebLink(cleanTo, messageBody),
       waMeLink: getWaMeLink(cleanTo, messageBody),
     };
@@ -524,19 +769,36 @@ const sendWhatsAppTemplate = async ({
   params = [],
   headerImageUrl = null,
 }) => {
+  await loadDbConfig();
   const token = getToken();
-  const phoneId = getPhoneId();
+  let phoneId = getPhoneId();
   const cleanTo = cleanPhoneNumber(to);
 
   if (!cleanTo) {
     return { success: false, error: 'Recipient phone number is invalid' };
   }
 
+  // If token is configured but phoneId not yet resolved, attempt dynamic auto-discovery
+  if (token && !phoneId) {
+    try {
+      const disc = await autoDiscoverMetaContact(token);
+      if (disc.success && disc.phoneNumberId) {
+        phoneId = disc.phoneNumberId;
+        setRuntimeWhatsAppConfig({
+          phoneNumberId: disc.phoneNumberId,
+          displayPhoneNumber: disc.displayPhoneNumber,
+          verifiedName: disc.verifiedName,
+          wabaId: disc.wabaId,
+        });
+      }
+    } catch (_) {}
+  }
+
   if (!token || !phoneId) {
     return {
       success: false,
       isConfigured: false,
-      error: 'WhatsApp credentials are not configured in .env',
+      error: 'WhatsApp credentials are not configured or contact could not be resolved',
       waLink: getWhatsAppWebLink(cleanTo),
       waMeLink: getWaMeLink(cleanTo),
     };
@@ -616,6 +878,7 @@ module.exports = {
   loadDbConfig,
   setRuntimeWhatsAppConfig,
   verifyMetaConnection,
+  autoDiscoverMetaContact,
   getToken,
   getPhoneId,
   PEYUG_OFFICIAL_TEMPLATES,

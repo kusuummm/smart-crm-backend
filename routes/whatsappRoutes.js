@@ -10,6 +10,7 @@ const {
   getConfig,
   updateConfig,
   testConnection,
+  autoDiscoverContact,
   getLiveTemplates,
   createMetaTemplate,
   getDeviceStatus,
@@ -38,6 +39,7 @@ router.post('/templates', authorize('admin'), createMetaTemplate);
 router.get('/config', getConfig);
 router.put('/config', authorize('admin'), updateConfig);
 router.post('/test-connection', authorize('admin'), testConnection);
+router.post('/auto-discover', authorize('admin'), autoDiscoverContact);
 
 // Built-in WhatsApp Device Connection (Baileys Web Client)
 router.get('/device/status', getDeviceStatus);

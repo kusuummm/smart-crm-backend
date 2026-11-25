@@ -91,7 +91,7 @@ const initiateCall = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Telephony Webhook for Call Status & Recordings (Twilio / Exotel / Superfone)
+// @desc    Telephony Webhook for Call Status & Recordings (Twilio / Exotel / Cloud Telephony)
 // @route   POST /api/telephony/webhook/call
 // @access  Public
 const handleCallWebhook = asyncHandler(async (req, res) => {

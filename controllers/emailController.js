@@ -6,6 +6,7 @@ const isAdminOrOwner = (user) => {
 const asyncHandler = require('express-async-handler');
 const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
+const Lead = require('../models/Lead');
 const sendEmail = require('../utils/sendEmail');
 
 const getTelecallerCustomerIds = async (user) => {
@@ -14,38 +15,69 @@ const getTelecallerCustomerIds = async (user) => {
   }).distinct('_id');
 };
 
-// Built-in templates for welcome / follow-up / offer emails.
-// Kept simple and editable - the actual subject/body can also be overridden by the caller.
+// Built-in templates for email dispatches to customers/leads
 const TEMPLATES = {
   welcome: (customer) => ({
     subject: 'Welcome to SmartCRM Solutions!',
     body: `Dear ${customer.name},\n\nThank you for choosing SmartCRM. We're excited to have you on board and look forward to helping your business grow.\n\nBest regards,\nSmartCRM Team`,
   }),
   'follow-up': (customer) => ({
-    subject: `Following up, ${customer.name}`,
-    body: `Hi ${customer.name},\n\nJust checking in regarding our recent conversation. Please let us know if you have any questions.\n\nBest regards,\nSmartCRM Team`,
+    subject: `Following up on your inquiry, ${customer.name}`,
+    body: `Hi ${customer.name},\n\nJust checking in regarding our recent conversation. Please let us know if you have any questions or would like additional information.\n\nBest regards,\nSmartCRM Team`,
   }),
   offer: (customer) => ({
-    subject: `Exclusive Update for ${customer.name} - SmartCRM`,
-    body: `Dear ${customer.name},\n\nWe have an exclusive offer available for you. Reach out to learn more!\n\nBest regards,\nSmartCRM Team`,
+    subject: `Exclusive Proposal & Special Update for ${customer.name}`,
+    body: `Dear ${customer.name},\n\nWe have prepared an exclusive proposal for your business requirements. Reach out to review terms and special discounts available this week!\n\nBest regards,\nSmartCRM Team`,
+  }),
+  quote: (customer) => ({
+    subject: `Quotation & Pricing Overview - SmartCRM for ${customer.name}`,
+    body: `Dear ${customer.name},\n\nThank you for your interest in our products and services. Attached or summarized below is your customized pricing structure.\n\nPlease let us know if you have questions or wish to proceed.\n\nBest regards,\nSmartCRM Team`,
+  }),
+  meeting: (customer) => ({
+    subject: `Meeting Invitation & Consultation - ${customer.name}`,
+    body: `Hi ${customer.name},\n\nWe would love to schedule a quick 15-minute consultation to walk you through how our platform can accelerate your sales pipeline.\n\nPlease reply with a suitable time that works for you.\n\nBest regards,\nSmartCRM Team`,
+  }),
+  status_update: (customer) => ({
+    subject: `Update Regarding Your Account Status - SmartCRM`,
+    body: `Dear ${customer.name},\n\nThis is an update regarding the progress on your account and recent activities. Our team is actively working on your requests.\n\nBest regards,\nSmartCRM Team`,
   }),
 };
 
-// @desc    Send an email to a customer (welcome / follow-up / offer / custom) and log it
+// @desc    Send an email to a customer / lead and log it
 // @route   POST /api/emails/send
 // @access  Private
 const sendCustomerEmail = asyncHandler(async (req, res) => {
-  const { customerId, type = 'follow-up', subject, body } = req.body;
+  let { customerId, leadId, type = 'follow-up', subject, body } = req.body;
 
-  const customer = await Customer.findById(customerId);
+  let lead = null;
+  let customer = null;
+
+  if (leadId) {
+    lead = await Lead.findById(leadId).populate('customerId');
+    if (lead && lead.customerId) {
+      customer = lead.customerId;
+      customerId = customer._id;
+    }
+  }
+
+  if (!customer && customerId) {
+    customer = await Customer.findById(customerId);
+    if (customer && !lead) {
+      lead = await Lead.findOne({ customerId: customer._id });
+      if (lead) leadId = lead._id;
+    }
+  }
+
   if (!customer) {
     res.status(404);
-    throw new Error('Customer not found');
+    throw new Error('Customer or Lead not found');
   }
 
   if (!isAdminOrOwner(req.user)) {
-    const isAssigned = (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
-                       customer.assignedTelecaller === req.user.name;
+    const isAssigned =
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name ||
+      (lead && lead.telecallerId && String(lead.telecallerId) === String(req.user._id));
     if (!isAssigned) {
       res.status(403);
       throw new Error('Access denied: You can only send emails to contacts assigned to you');
@@ -59,7 +91,9 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
 
   if (customer.email.endsWith('@example.com') || customer.email.endsWith('@crm.com')) {
     res.status(400);
-    throw new Error('Customer email is a placeholder domain (@example.com / @crm.com). Please edit the customer profile with a real recipient email address before sending.');
+    throw new Error(
+      'Customer email is a placeholder domain (@example.com / @crm.com). Please edit the customer profile with a real recipient email address before sending.'
+    );
   }
 
   const template = TEMPLATES[type] ? TEMPLATES[type](customer) : {};
@@ -73,30 +107,229 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
   });
 
   const log = await EmailLog.create({
-    customerId,
+    leadId: lead?._id || leadId || null,
+    customerId: customer._id,
     customerName: customer.name,
     email: customer.email,
+    to: customer.email,
+    from: process.env.EMAIL_FROM || process.env.EMAIL_USER || 'crm@system.local',
+    direction: 'outgoing',
     subject: finalSubject,
     body: finalBody,
-    type,
+    bodySnippet: finalBody.slice(0, 160),
+    type: TEMPLATES[type] ? type : 'custom',
     status: result.success ? 'sent' : 'failed',
+    isRead: true,
     error: result.error || '',
     sentBy: req.user._id,
     sentByName: req.user.name,
+    metadata: {
+      leadId: lead?._id || null,
+      messageId: result.messageId || null,
+    },
   });
+
+  // If associated lead exists, log this email event in lead history
+  if (lead) {
+    try {
+      lead.history.push({
+        status: lead.status || 'in-progress',
+        date: new Date(),
+        remark: `Dispatched email "${finalSubject}" via CRM by ${req.user.name || 'User'}`,
+        updatedBy: req.user._id,
+      });
+      await lead.save();
+    } catch (err) {
+      console.warn('[sendCustomerEmail] Error appending to lead history:', err.message);
+    }
+  }
 
   if (!result.success) {
     return res.status(502).json({ success: false, message: `Email send failed: ${result.error}`, log });
   }
 
-  res.status(201).json({ success: true, log });
+  res.status(201).json({ success: true, message: 'Email dispatched successfully to lead', log });
 });
 
-// @desc    Get email logs (filter by type/status/customer, pagination)
-// @route   GET /api/emails?type=&status=&customerId=&page=&limit=
+// @desc    Receive incoming email from a lead / webhook on CRM system
+// @route   POST /api/emails/inbound or POST /api/emails/receive
+// @access  Public (for webhooks) or Private
+const receiveInboundEmail = asyncHandler(async (req, res) => {
+  const {
+    leadId,
+    customerId,
+    from,
+    sender,
+    to,
+    recipient,
+    subject,
+    body,
+    text,
+    html,
+    receivedAt,
+  } = req.body;
+
+  const senderEmail = (from || sender || req.body['from-address'] || '').toLowerCase().trim();
+  const emailSubject = subject || req.body['subject'] || req.body['message-subject'] || 'Inbound Message from Lead';
+  const emailBody = body || text || req.body['body-plain'] || html || 'No content';
+
+  if (!senderEmail || !senderEmail.includes('@')) {
+    res.status(400);
+    throw new Error('A valid sender email address (from) is required');
+  }
+
+  let lead = null;
+  let customer = null;
+
+  if (leadId) {
+    lead = await Lead.findById(leadId).populate('customerId');
+    if (lead && lead.customerId) customer = lead.customerId;
+  }
+
+  if (!customer && customerId) {
+    customer = await Customer.findById(customerId);
+    if (customer && !lead) {
+      lead = await Lead.findOne({ customerId: customer._id });
+    }
+  }
+
+  // Automatic match by email if neither leadId nor customerId passed
+  if (!customer) {
+    customer = await Customer.findOne({ email: senderEmail });
+    if (customer && !lead) {
+      lead = await Lead.findOne({ customerId: customer._id });
+    }
+  }
+
+  // If still no lead, but sender matches any lead customer name or partial
+  if (!lead && customer) {
+    lead = await Lead.findOne({ customerId: customer._id });
+  }
+
+  const log = await EmailLog.create({
+    leadId: lead?._id || null,
+    customerId: customer?._id || null,
+    customerName: customer?.name || lead?.customerName || senderEmail,
+    email: senderEmail,
+    from: senderEmail,
+    to: to || recipient || process.env.EMAIL_USER || 'crm@system.local',
+    direction: 'incoming',
+    subject: emailSubject,
+    body: emailBody,
+    bodySnippet: emailBody.slice(0, 160),
+    type: 'incoming',
+    status: 'received',
+    isRead: false,
+    receivedAt: receivedAt ? new Date(receivedAt) : new Date(),
+    sentBy: null,
+    sentByName: customer?.name || senderEmail,
+    metadata: {
+      source: 'lead_inbound_email',
+      leadId: lead?._id || null,
+    },
+  });
+
+  // If lead exists, append to history so lead panel immediately reflects received email
+  if (lead) {
+    try {
+      lead.history.push({
+        status: lead.status || 'in-progress',
+        date: new Date(),
+        remark: `Received incoming email from lead: "${emailSubject}"`,
+        updatedBy: null,
+      });
+      await lead.save();
+    } catch (err) {
+      console.warn('[receiveInboundEmail] Error updating lead history:', err.message);
+    }
+  }
+
+  res.status(201).json({
+    success: true,
+    message: `Incoming email from ${senderEmail} successfully received and logged on CRM system`,
+    log,
+  });
+});
+
+// @desc    Get all emails (received & sent) for a specific lead
+// @route   GET /api/leads/:leadId/emails or GET /api/emails?leadId=...
+// @access  Private
+const getLeadEmails = asyncHandler(async (req, res) => {
+  const leadId = req.params.leadId || req.params.id || req.query.leadId;
+
+  if (!leadId) {
+    res.status(400);
+    throw new Error('Lead ID is required');
+  }
+
+  const lead = await Lead.findById(leadId).populate('customerId');
+  if (!lead) {
+    res.status(404);
+    throw new Error('Lead not found');
+  }
+
+  const customer = lead.customerId;
+  const customerEmail = customer?.email ? customer.email.toLowerCase().trim() : null;
+
+  // Build match query for all communication associated with this lead
+  const orConditions = [{ leadId: lead._id }];
+
+  if (customer && customer._id) {
+    orConditions.push({ customerId: customer._id });
+  }
+
+  if (customerEmail) {
+    orConditions.push({ email: customerEmail });
+    orConditions.push({ to: customerEmail });
+    orConditions.push({ from: customerEmail });
+  }
+
+  const logs = await EmailLog.find({ $or: orConditions })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const receivedCount = logs.filter((l) => l.direction === 'incoming').length;
+  const sentCount = logs.filter((l) => l.direction !== 'incoming').length;
+  const unreadCount = logs.filter((l) => l.direction === 'incoming' && !l.isRead).length;
+
+  res.json({
+    success: true,
+    count: logs.length,
+    receivedCount,
+    sentCount,
+    unreadCount,
+    lead: {
+      id: lead._id,
+      customerName: lead.customerName,
+      status: lead.status,
+      customerEmail: customerEmail || '',
+      customerId: customer?._id || null,
+    },
+    logs,
+  });
+});
+
+// @desc    Mark an email as read
+// @route   PATCH /api/emails/:id/read
+// @access  Private
+const markEmailRead = asyncHandler(async (req, res) => {
+  const log = await EmailLog.findById(req.params.id);
+  if (!log) {
+    res.status(404);
+    throw new Error('Email log not found');
+  }
+
+  log.isRead = true;
+  await log.save();
+
+  res.json({ success: true, log });
+});
+
+// @desc    Get email logs (filter by type/status/customer/lead, pagination)
+// @route   GET /api/emails?type=&status=&customerId=&leadId=&direction=&page=&limit=
 // @access  Private
 const getEmailLogs = asyncHandler(async (req, res) => {
-  const { type, status, customerId, page = 1, limit = 10, sentBy } = req.query;
+  const { type, status, customerId, leadId, direction, page = 1, limit = 10, sentBy } = req.query;
   const conditions = [];
 
   if (!isAdminOrOwner(req.user)) {
@@ -116,6 +349,8 @@ const getEmailLogs = asyncHandler(async (req, res) => {
   if (type) conditions.push({ type });
   if (status) conditions.push({ status });
   if (customerId) conditions.push({ customerId });
+  if (leadId) conditions.push({ leadId });
+  if (direction && direction !== 'all') conditions.push({ direction });
 
   const filter = conditions.length > 0 ? { $and: conditions } : {};
 
@@ -155,7 +390,9 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
 
   if (cleanRecipient.endsWith('@example.com') || cleanRecipient.endsWith('@crm.com')) {
     res.status(400);
-    throw new Error('Cannot send test to a placeholder domain (@example.com or @crm.com). Please enter your real email address (e.g. Gmail or Outlook).');
+    throw new Error(
+      'Cannot send test to a placeholder domain (@example.com or @crm.com). Please enter your real email address (e.g. Gmail or Outlook).'
+    );
   }
 
   const result = await sendEmail({
@@ -181,9 +418,11 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
   await EmailLog.create({
     customerName: 'Admin SMTP Test',
     email: cleanRecipient,
+    to: cleanRecipient,
     subject: `SmartCRM Deliverability Test — ${new Date().toLocaleTimeString()}`,
     body: `Live SMTP Deliverability Verification dispatch via port ${result.port || 465}.`,
     type: 'general',
+    direction: 'outgoing',
     status: result.success ? 'sent' : 'failed',
     error: result.error || '',
     sentBy: req.user._id,
@@ -202,5 +441,11 @@ const testEmailDelivery = asyncHandler(async (req, res) => {
   });
 });
 
-module.exports = { sendCustomerEmail, getEmailLogs, testEmailDelivery };
-
+module.exports = {
+  sendCustomerEmail,
+  getEmailLogs,
+  getLeadEmails,
+  receiveInboundEmail,
+  markEmailRead,
+  testEmailDelivery,
+};

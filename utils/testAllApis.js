@@ -356,9 +356,41 @@ async function runApiVerification() {
   });
 
   // 9. Core CRM Modules Check
+  let testLeadId = '';
   await test('Leads API', 'CRM Modules', async () => {
     const res = await axios.get(`${baseUrl}/leads`, authHeader());
-    return { status: res.status, detail: `${res.data.leads?.length || 0} leads` };
+    const leads = res.data.leads || [];
+    if (leads.length > 0) testLeadId = String(leads[0]._id);
+    return { status: res.status, detail: `${leads.length} leads (Found Lead ID: ${testLeadId})` };
+  });
+
+  let testInboundEmailId = '';
+  await test('Lead Inbound Email Ingestion on CRM (/emails/inbound)', 'Lead Emails', async () => {
+    const res = await axios.post(`${baseUrl}/emails/inbound`, {
+      leadId: testLeadId || undefined,
+      from: 'inbound.client@example.com',
+      subject: 'Inquiry response from lead',
+      body: 'Hello CRM team, we received your proposal and are interested in proceeding.',
+    });
+    if (!res.data.success || !res.data.log) throw new Error('Expected successful email ingestion');
+    testInboundEmailId = res.data.log._id;
+    return { status: res.status, detail: `Received email logged: ID ${testInboundEmailId}, direction: ${res.data.log.direction}` };
+  });
+
+  await test('Get Lead Emails Timeline (/leads/:id/emails)', 'Lead Emails', async () => {
+    if (!testLeadId) return { status: 200, detail: 'Skipped - no test lead' };
+    const res = await axios.get(`${baseUrl}/leads/${testLeadId}/emails`, authHeader());
+    return {
+      status: res.status,
+      detail: `Total: ${res.data.count}, Received: ${res.data.receivedCount}, Sent: ${res.data.sentCount}`,
+    };
+  });
+
+  await test('Mark Received Email as Read (/emails/:id/read)', 'Lead Emails', async () => {
+    if (!testInboundEmailId) return { status: 200, detail: 'Skipped - no test email' };
+    const res = await axios.patch(`${baseUrl}/emails/${testInboundEmailId}/read`, {}, authHeader());
+    if (!res.data.log.isRead) throw new Error('Expected isRead to be true');
+    return { status: res.status, detail: `Marked as read successfully` };
   });
 
   await test('Follow-ups API', 'CRM Modules', async () => {

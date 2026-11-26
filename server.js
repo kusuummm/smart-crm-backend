@@ -34,7 +34,9 @@ const automationRoutes = require('./routes/automationRoutes');
 const eodRoutes = require('./routes/eodRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
+const rewardRoutes = require('./routes/rewardRoutes');
 const { seedDefaultAutomations } = require('./services/automationService');
+const { seedCoupons } = require('./services/rewardService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
 const { generalLimiter } = require('./middleware/rateLimiter');
 
@@ -42,6 +44,7 @@ connectDB().then(async () => {
   try {
     const { seedInitialDataIfEmpty } = require('./services/initialSeedService');
     await seedInitialDataIfEmpty();
+    await seedCoupons();
   } catch (seedErr) {
     console.warn('[InitialSeed] Startup check notice:', seedErr.message);
   }
@@ -208,6 +211,7 @@ app.use(
     '/eod',
     '/teams',
     '/settings',
+    '/rewards',
   ],
   denyByDefault
 );
@@ -279,6 +283,9 @@ app.use(['/api/teams', '/teams'], teamRoutes);
 
 // Workspace & Call Recording Preferences (Persisted in MongoDB)
 app.use(['/api/settings', '/settings'], settingsRoutes);
+
+// Coupons, Referrals & Loyalty Rewards
+app.use(['/api/rewards', '/rewards'], rewardRoutes);
 
 // Protected uploads directory - verifies authentication to guard KYC documents & certificates
 const jwt = require('jsonwebtoken');

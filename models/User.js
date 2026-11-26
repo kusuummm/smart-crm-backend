@@ -16,13 +16,15 @@ const userSchema = new mongoose.Schema(
     isApproved: { type: Boolean, default: false },
     phone: { type: String, default: '' },
     balance: { type: String, default: '₹0.0' },
+    referralCode: { type: String, unique: true, sparse: true, uppercase: true, trim: true },
+    referredBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     isOnline: { type: Boolean, default: false },
     lastActive: { type: Date, default: Date.now },
   },
   { timestamps: true }
 );
 
-// Auto-generate avatar initials if not provided
+// Auto-generate avatar initials & referralCode if not provided
 userSchema.pre('save', function (next) {
   if (!this.avatar && this.name) {
     this.avatar = this.name
@@ -31,6 +33,14 @@ userSchema.pre('save', function (next) {
       .join('')
       .substring(0, 2)
       .toUpperCase();
+  }
+  if (!this.referralCode) {
+    const cleanPrefix = (this.name || 'USER')
+      .replace(/[^a-zA-Z]/g, '')
+      .slice(0, 4)
+      .toUpperCase();
+    const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+    this.referralCode = `REF-${cleanPrefix}-${rand}`;
   }
   next();
 });

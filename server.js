@@ -35,6 +35,7 @@ const eodRoutes = require('./routes/eodRoutes');
 const teamRoutes = require('./routes/teamRoutes');
 const settingsRoutes = require('./routes/settingsRoutes');
 const rewardRoutes = require('./routes/rewardRoutes');
+const aiRoutes = require('./routes/aiRoutes');
 const { seedDefaultAutomations } = require('./services/automationService');
 const { seedCoupons } = require('./services/rewardService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
@@ -212,6 +213,7 @@ app.use(
     '/teams',
     '/settings',
     '/rewards',
+    '/ai',
   ],
   denyByDefault
 );
@@ -286,6 +288,9 @@ app.use(['/api/settings', '/settings'], settingsRoutes);
 
 // Coupons, Referrals & Loyalty Rewards
 app.use(['/api/rewards', '/rewards'], rewardRoutes);
+
+// AI Integrations, Copilot & Least-Privilege Tool Execution
+app.use(['/api/ai', '/ai'], aiRoutes);
 
 // Protected uploads directory - verifies authentication to guard KYC documents & certificates
 const jwt = require('jsonwebtoken');

@@ -25,6 +25,7 @@
     "test:jwt": "node utils/testJwtSecurity.js",
     "test:ratelimit": "node utils/testRateLimitAndProxySecurity.js",
     "test:rls": "node utils/testDatabaseRlsAndTenantIsolation.js",
+    "verify:clean": "node utils/verifyCleanGitDiff.js",
     "scan:secrets": "node utils/secretScanner.js"
   },
   "dependencies": {

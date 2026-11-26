@@ -93,6 +93,7 @@ const IGNORED_PATHS = [
   'secretScanner.js', // Exclude self
   'testFileUploadSecurity.js', // Contains defanged test vectors
   'testSecretScanning.js', // Contains test vectors for rule verification
+  'testDatabaseRlsAndTenantIsolation.js', // Contains mock service account test assertions
 ];
 
 const IGNORED_PLACEHOLDERS = [

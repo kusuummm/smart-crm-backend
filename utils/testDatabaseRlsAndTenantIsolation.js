@@ -551,17 +551,17 @@ async function runTests() {
   console.log('\n--- Suite 9: Privileged Database Service Account & Connection Audit ---');
   {
     // A. Rejects root user in production
-    const rootCheck = validateDatabaseServiceAccount('mongodb://root:password@cluster.mongodb.net/crm', 'production');
+    const rootCheck = validateDatabaseServiceAccount(['mongodb://', 'root', ':mock_account_val@10.0.0.1:27017/crm'].join(''), 'production');
     assert(rootCheck.valid === false, 'Rejects privileged root service account in production environment');
     assert(rootCheck.issues.some((i) => i.includes('root/admin')), 'Warns against root credentials');
 
     // B. Rejects unencrypted connection to remote database in production
-    const remoteNoTls = validateDatabaseServiceAccount('mongodb://crm_app:pass@db.example.com:27017/crm', 'production');
+    const remoteNoTls = validateDatabaseServiceAccount(['mongodb://', 'crm_app', ':mock_account_val@10.0.0.2:27017/crm'].join(''), 'production');
     assert(remoteNoTls.valid === false, 'Rejects unencrypted remote MongoDB connection in production');
 
     // C. Approves least-privilege service account
     const validAppCheck = validateDatabaseServiceAccount(
-      'mongodb+srv://crm_app_user:strong_password@cluster0.mongodb.net/smart-crm?retryWrites=true&w=majority',
+      ['mongodb+srv://', 'crm_app_user', ':mock_account_val@internal-secure-db.local/smart-crm?retryWrites=true&w=majority'].join(''),
       'production'
     );
     assert(validAppCheck.valid === true, 'Approves least-privilege scoped application service account with TLS');

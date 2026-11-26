@@ -35,15 +35,15 @@ router.get('/', getLogs);
 router.get('/templates', getLiveTemplates);
 router.post('/templates', authorize('admin'), createMetaTemplate);
 
-// WhatsApp Configuration & Diagnostics
-router.get('/config', getConfig);
+// WhatsApp Configuration & Diagnostics (Admin Only)
+router.get('/config', authorize('admin'), getConfig);
 router.put('/config', authorize('admin'), updateConfig);
 router.post('/test-connection', authorize('admin'), testConnection);
 router.post('/auto-discover', authorize('admin'), autoDiscoverContact);
 
-// Built-in WhatsApp Device Connection (Baileys Web Client)
+// Built-in WhatsApp Device Connection (Baileys Web Client - Admin Only)
 router.get('/device/status', getDeviceStatus);
-router.post('/device/connect', connectDevice);
-router.post('/device/disconnect', disconnectDevice);
+router.post('/device/connect', authorize('admin'), connectDevice);
+router.post('/device/disconnect', authorize('admin'), disconnectDevice);
 
 module.exports = router;

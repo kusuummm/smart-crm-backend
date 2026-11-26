@@ -29,17 +29,17 @@ router.route('/')
 
 router.get('/:id', getApplicationById);
 
-// Status and Payment updates
-router.patch('/:id/status', updateStatus);
-router.patch('/:id/payment', updatePayment);
+// Status and Payment updates (Requires manager/admin governance)
+router.patch('/:id/status', authorize('manager'), updateStatus);
+router.patch('/:id/payment', authorize('manager'), updatePayment);
 
 // Document Folder operations
 router.post('/:id/documents', upload.single('file'), uploadDocument);
-router.patch('/:id/documents/:docId/status', updateDocumentStatus);
-router.delete('/:id/documents/:docId', deleteDocument);
+router.patch('/:id/documents/:docId/status', authorize('manager'), updateDocumentStatus);
+router.delete('/:id/documents/:docId', authorize('manager'), deleteDocument);
 
 // Final Certificate Upload and Management
-router.post('/:id/certificate', upload.single('file'), uploadCertificate);
+router.post('/:id/certificate', authorize('manager'), upload.single('file'), uploadCertificate);
 router.delete('/:id/certificate', authorize('admin'), deleteCertificate);
 
 module.exports = router;

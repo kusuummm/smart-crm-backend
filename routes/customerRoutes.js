@@ -16,13 +16,13 @@ router.use(protect);
 
 // Bulk operations - MUST come before /:id parameter route
 router.post('/bulk-assign', authorize('manager'), bulkAssignCustomers);
-router.post('/bulk-delete', bulkDeleteCustomers);
+router.post('/bulk-delete', authorize('admin'), bulkDeleteCustomers);
 
 // Unified customer communication history (calls, whatsapp, emails, notes, applications)
 router.get('/:id/communication-history', getCustomerCommunicationHistory);
 router.get('/:id/timeline', getCustomerCommunicationHistory);
 
 router.route('/').post(createCustomer).get(getCustomers);
-router.route('/:id').get(getCustomerById).put(updateCustomer).delete(deleteCustomer);
+router.route('/:id').get(getCustomerById).put(updateCustomer).delete(authorize('admin'), deleteCustomer);
 
 module.exports = router;

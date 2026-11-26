@@ -33,18 +33,17 @@ const respondWithReport = async (res, { filename, sheetName, columns, rows, form
 
 // @desc    Daily follow-up report for a given date (defaults to today)
 // @route   GET /api/reports/daily-followups?date=YYYY-MM-DD&format=json|excel|csv
-// @access  Private (Telecaller only - strictly isolated)
+// @access  Private
 const dailyFollowUpReport = asyncHandler(async (req, res) => {
-  if (isAdminOrOwner(req.user)) {
-    res.status(403);
-    throw new Error('Access denied: Administrators use the executive overview');
-  }
-
   const date = req.query.date || new Date().toISOString().split('T')[0];
   const format = req.query.format || 'json';
 
-  // Strict isolation: callers can ONLY access their own follow-up reports
-  const filter = { date, createdBy: req.user._id };
+  const filter = { date };
+  if (!isAdminOrOwner(req.user)) {
+    filter.$or = [{ createdBy: req.user._id }, { assignedTo: req.user._id }];
+  } else if (req.query.telecallerId && req.query.telecallerId !== 'all') {
+    filter.createdBy = req.query.telecallerId;
+  }
 
   const followUps = await FollowUp.find(filter).sort({ time: 1 });
 

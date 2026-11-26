@@ -9,7 +9,7 @@ const path = require('path');
 
 const connectDB = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
-const { protect, authorize } = require('./middleware/auth');
+const { protect, authorize, denyByDefault } = require('./middleware/auth');
 
 // Route imports
 const authRoutes = require('./routes/authRoutes');
@@ -176,6 +176,37 @@ app.get('/api/health/network', protect, authorize('admin'), async (req, res) => 
   });
 });
 
+
+// ================= DENY-BY-DEFAULT ACCESS CONTROL =================
+// Automatically enforces server-side authentication on all API routes unless explicitly whitelisted
+app.use(
+  [
+    '/api',
+    '/auth',
+    '/users',
+    '/customers',
+    '/leads',
+    '/followups',
+    '/dashboard',
+    '/search',
+    '/calls',
+    '/emails',
+    '/whatsapp',
+    '/events',
+    '/reports',
+    '/broadcast',
+    '/notes',
+    '/wallet',
+    '/telephony',
+    '/meetings',
+    '/applications',
+    '/automations',
+    '/eod',
+    '/teams',
+    '/settings',
+  ],
+  denyByDefault
+);
 
 // ================= ROUTES =================
 

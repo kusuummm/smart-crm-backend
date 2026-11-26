@@ -111,12 +111,22 @@ const createNote = asyncHandler(async (req, res) => {
 
 // @desc    Delete a note
 // @route   DELETE /api/notes/:id
-// @access  Private
+// @access  Private (Owner or Administrator)
 const deleteNote = asyncHandler(async (req, res) => {
   const note = await Note.findById(req.params.id);
   if (!note) {
     res.status(404);
     throw new Error('Note not found');
+  }
+
+  const role = (req.user?.role || '').toLowerCase();
+  const isAdminOrManager = ['admin', 'owner', 'manager'].includes(role);
+  const isOwner = (note.createdBy && String(note.createdBy) === String(req.user._id)) ||
+                  (note.createdByName && note.createdByName === req.user.name);
+
+  if (!isAdminOrManager && !isOwner) {
+    res.status(403);
+    throw new Error('Access denied: You can only delete notes created by your account');
   }
 
   await note.deleteOne();

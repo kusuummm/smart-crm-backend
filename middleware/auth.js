@@ -25,13 +25,13 @@ const protect = asyncHandler(async (req, res, next) => {
       throw new Error('Not authorized, user no longer exists');
     }
 
-    // Role check: Only admin and member can access the CRM
+    // Role check: Only admin, owner, manager, and member can access the CRM
     let normalizedRole = (user.role || '').toLowerCase().trim();
     if (normalizedRole === 'telecaller') normalizedRole = 'member';
-    const isAllowedRole = ['admin', 'owner', 'member'].includes(normalizedRole);
+    const isAllowedRole = ['admin', 'owner', 'manager', 'member'].includes(normalizedRole);
     if (!isAllowedRole) {
       res.status(403);
-      throw new Error('Access denied. Only admin and member accounts are authorized to access the CRM.');
+      throw new Error('Access denied. Only admin, manager, and member accounts are authorized to access the CRM.');
     }
 
     const isAdmin = ['admin', 'owner'].includes(normalizedRole);
@@ -109,4 +109,35 @@ const authorize = (...roles) => {
   };
 };
 
-module.exports = { protect, authorize, ROLE_HIERARCHY };
+// Explicit public route whitelist for deny-by-default architecture
+const PUBLIC_WHITELIST = [
+  /^\/(api\/)?health(\/.*)?$/i,
+  /^\/health$/i,
+  /^\/$/i,
+  /^\/(api\/)?auth\/login$/i,
+  /^\/(api\/)?auth\/register$/i,
+  /^\/(api\/)?auth\/register\/send-otp$/i,
+  /^\/(api\/)?auth\/register\/verify-otp$/i,
+  /^\/(api\/)?auth\/forgot-password\/send-otp$/i,
+  /^\/(api\/)?auth\/forgot-password\/verify-reset$/i,
+  /^\/(api\/)?whatsapp\/webhook$/i,
+  /^\/(api\/)?telephony\/webhook\/call$/i,
+  /^\/(api\/)?telephony\/webhook\/recording$/i,
+  /^\/(api\/)?emails\/inbound$/i,
+];
+
+// Deny-by-default access control middleware
+// Any request to /api/* not on the public whitelist is automatically rejected without valid authentication
+const denyByDefault = (req, res, next) => {
+  const targetPath = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
+  const isPublic = PUBLIC_WHITELIST.some((pattern) => pattern.test(targetPath) || pattern.test(req.path));
+
+  if (isPublic) {
+    return next();
+  }
+
+  // Deny-by-default: enforce authentication
+  return protect(req, res, next);
+};
+
+module.exports = { protect, authorize, denyByDefault, PUBLIC_WHITELIST, ROLE_HIERARCHY };

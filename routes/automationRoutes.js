@@ -10,8 +10,8 @@ const { protect, authorize } = require('../middleware/auth');
 
 router.use(protect);
 
-router.route('/').get(getAutomations);
-router.route('/logs').get(getAutomationLogs);
+router.route('/').get(authorize('manager'), getAutomations);
+router.route('/logs').get(authorize('manager'), getAutomationLogs);
 router.route('/:id').put(authorize('admin'), updateAutomation);
 router.route('/test-trigger').post(authorize('admin'), testTriggerAutomation);
 

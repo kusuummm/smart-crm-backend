@@ -10,7 +10,7 @@ const { protect, authorize } = require('../middleware/auth');
 router.use(protect);
 
 router.route('/')
-  .get(getBroadcasts)
+  .get(authorize('manager'), getBroadcasts)
   .post(authorize('admin'), createBroadcast);
 
 router.post('/:id/retry', authorize('admin'), retryBroadcast);

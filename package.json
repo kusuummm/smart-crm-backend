@@ -10,7 +10,8 @@
     "seed": "node utils/seed.js",
     "test:email": "node utils/testEmail.js",
     "test:apis": "node utils/testAllApis.js",
-    "test:emails": "node utils/testAllEmails.js"
+    "test:emails": "node utils/testAllEmails.js",
+    "test:security": "node utils/testAccessControl.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

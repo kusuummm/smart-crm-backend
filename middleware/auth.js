@@ -124,6 +124,7 @@ const PUBLIC_WHITELIST = [
   /^\/(api\/)?telephony\/webhook\/call$/i,
   /^\/(api\/)?telephony\/webhook\/recording$/i,
   /^\/(api\/)?emails\/inbound$/i,
+  /^\/(api\/)?wallet\/webhook\/razorpay$/i,
 ];
 
 // Deny-by-default access control middleware

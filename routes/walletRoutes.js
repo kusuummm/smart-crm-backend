@@ -9,9 +9,14 @@ const {
   payWithWallet,
   getOrders,
   getTransactions,
+  handleRazorpayWebhook,
 } = require('../controllers/walletController');
 const { protect } = require('../middleware/auth');
 
+// Public Gateway Webhooks (Verified via x-razorpay-signature HMAC)
+router.post('/webhook/razorpay', handleRazorpayWebhook);
+
+// Protected Wallet & Checkout Endpoints
 router.use(protect);
 
 // Trusted Pricing & Calculation Endpoints

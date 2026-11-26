@@ -11,6 +11,11 @@ const {
   APPLICATION_FEE_MAP,
   calculateCheckoutPricing,
 } = require('../services/pricingService');
+const {
+  verifyWebhookSignature,
+  verifyPaymentWithProvider,
+  fulfillOrderPayment,
+} = require('../services/paymentProviderService');
 
 // @desc    Get trusted pricing catalog and active promotions
 // @route   GET /api/wallet/pricing/catalog
@@ -258,98 +263,185 @@ const rechargeWallet = asyncHandler(async (req, res) => {
     );
   }
 
-  // 5. Gateway Cryptographic HMAC Verification when live Razorpay secret is present
+  // 5. Gateway Cryptographic HMAC Verification & Direct Provider Status Verification
   const effectivePaymentId = razorpay_payment_id || utrNumber || paymentId || `pay_${Date.now()}`;
   const razorpaySecret = process.env.RAZORPAY_KEY_SECRET;
 
-  if (razorpaySecret && razorpay_order_id && razorpay_payment_id && razorpay_signature) {
-    const expectedSignature = crypto
-      .createHmac('sha256', razorpaySecret)
-      .update(`${razorpay_order_id}|${razorpay_payment_id}`)
-      .digest('hex');
+  if (razorpay_payment_id) {
+    // A. Verify local HMAC signature if present
+    if (razorpaySecret && razorpay_order_id && razorpay_signature) {
+      const expectedSignature = crypto
+        .createHmac('sha256', razorpaySecret)
+        .update(`${razorpay_order_id}|${razorpay_payment_id}`)
+        .digest('hex');
 
-    if (expectedSignature !== razorpay_signature) {
-      res.status(400);
-      throw new Error('Payment verification failed: Invalid cryptographic signature from payment gateway.');
+      if (expectedSignature !== razorpay_signature) {
+        res.status(400);
+        throw new Error('Payment verification failed: Invalid cryptographic signature from payment gateway.');
+      }
     }
+
+    // B. Direct Payment Verification directly with provider REST API
+    await verifyPaymentWithProvider({
+      paymentId: razorpay_payment_id,
+      expectedOrderId: order.orderId,
+      expectedAmount: order.pricing.total,
+      expectedCurrency: 'INR',
+    });
   }
 
-  // 6. Load or Create User Wallet
-  let wallet = await Wallet.findOne({ userId: req.user._id });
-  if (!wallet) {
-    wallet = new Wallet({ userId: req.user._id, balance: 0.0, transactions: [] });
-  }
-
-  // 7. Prevent duplicate transaction replay attacks
-  const alreadyProcessed = wallet.transactions.some(
-    (tx) => tx.paymentId && tx.paymentId === effectivePaymentId
-  );
-  if (alreadyProcessed) {
-    res.status(409);
-    throw new Error('Duplicate transaction: This payment has already been credited to your wallet.');
-  }
-
-  const now = new Date();
-  const dateStr = `${now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-
-  let newTx = null;
-  if (order.type === 'wallet_recharge') {
-    newTx = {
-      amount: trustedAmount,
-      type: 'credit',
-      description: `Wallet top-up via ${paymentMethod}`,
-      paymentId: effectivePaymentId,
-      status: 'completed',
-      date: dateStr,
-      createdAt: now,
-    };
-    wallet.balance += trustedAmount;
-    wallet.transactions.unshift(newTx);
-    await wallet.save();
-  } else {
-    // Product or plan checkout
-    newTx = {
-      amount: trustedAmount,
-      type: 'purchase',
-      description: `Payment for ${order.items.map((i) => i.name).join(', ') || 'CRM Products'}`,
-      paymentId: effectivePaymentId,
-      status: 'completed',
-      date: dateStr,
-      createdAt: now,
-    };
-    wallet.transactions.unshift(newTx);
-    await wallet.save();
-  }
-
-  // 8. Mark Order as Paid
-  order.status = 'paid';
-  order.paymentDetails = {
-    paymentMethod,
+  // 6. Centralized Idempotent Fulfillment
+  const fulfillment = await fulfillOrderPayment({
+    order,
     paymentId: effectivePaymentId,
-    razorpayOrderId: razorpay_order_id || order.orderId,
-    razorpayPaymentId: razorpay_payment_id || '',
-    razorpaySignature: razorpay_signature || '',
-    paidAt: now,
-  };
-  await order.save();
-
-  // 9. Sync User model balance
-  await User.findByIdAndUpdate(req.user._id, {
-    balance: `₹${wallet.balance.toFixed(1)}`,
-  }).catch(() => {});
+    paymentMethod,
+    paymentDetails: {
+      razorpayOrderId: razorpay_order_id || order.orderId,
+      razorpayPaymentId: razorpay_payment_id || '',
+      razorpaySignature: razorpay_signature || '',
+    },
+  });
 
   res.json({
     success: true,
-    balance: wallet.balance,
-    amountProcessed: trustedAmount,
+    balance: fulfillment.wallet?.balance,
+    amountProcessed: fulfillment.amountProcessed || trustedAmount,
     message:
       order.type === 'wallet_recharge'
         ? `₹${trustedAmount.toLocaleString()} credited to your CRM wallet successfully!`
         : `Payment of ₹${trustedAmount.toLocaleString()} verified for order '${order.orderId}'.`,
-    transaction: newTx,
-    order,
-    wallet,
+    transaction: fulfillment.transaction,
+    order: fulfillment.order,
+    wallet: fulfillment.wallet,
   });
+});
+
+// @desc    Handle Razorpay Webhooks (payment.captured, order.paid, payment.failed)
+// @route   POST /api/wallet/webhook/razorpay
+// @access  Public (Verified via x-razorpay-signature)
+const handleRazorpayWebhook = asyncHandler(async (req, res) => {
+  const signature = req.headers['x-razorpay-signature'];
+  const webhookSecret = process.env.RAZORPAY_WEBHOOK_SECRET;
+
+  // 1. Validate Webhook Signature
+  if (webhookSecret) {
+    const { valid, reason } = verifyWebhookSignature({
+      rawBody: req.rawBody,
+      signature,
+      secret: webhookSecret,
+    });
+
+    if (!valid) {
+      console.warn(`[Razorpay Webhook Signature Rejected]: ${reason}`);
+      res.status(400);
+      throw new Error(`Webhook signature validation failed: ${reason}`);
+    }
+  }
+
+  const event = req.body;
+  if (!event || !event.event) {
+    res.status(400);
+    throw new Error('Invalid webhook payload: Event type missing');
+  }
+
+  const eventType = event.event;
+
+  // 2. Handle Payment Captured or Order Paid events
+  if (eventType === 'payment.captured' || eventType === 'order.paid') {
+    const payment = event.payload?.payment?.entity;
+    const orderEntity = event.payload?.order?.entity;
+
+    const orderId = payment?.order_id || orderEntity?.id;
+    const paymentId = payment?.id || orderEntity?.payment_id || `pay_wh_${Date.now()}`;
+    const status = payment?.status || 'captured';
+    const currency = (payment?.currency || orderEntity?.currency || 'INR').toUpperCase();
+    const amountInPaise = payment?.amount !== undefined ? payment.amount : orderEntity?.amount_paid;
+
+    if (!orderId) {
+      res.status(400);
+      throw new Error('Webhook error: Order ID missing in payment payload');
+    }
+
+    // A. Verify Payment Status is confirmed (captured or authorized)
+    if (status !== 'captured' && status !== 'authorized') {
+      res.status(400);
+      throw new Error(`Unconfirmed payment: Webhook payment status is '${status}'. Settlement rejected.`);
+    }
+
+    // B. Verify Currency is strictly INR
+    if (currency !== 'INR') {
+      res.status(400);
+      throw new Error(`Currency rejected: Webhook payment currency '${currency}' is not supported. Must be INR.`);
+    }
+
+    // C. Retrieve Order from Database
+    const order = await Order.findOne({
+      $or: [{ orderId }, { 'paymentDetails.razorpayOrderId': orderId }],
+    });
+
+    if (!order) {
+      res.status(404);
+      throw new Error(`Order not found: Order '${orderId}' does not exist in CRM database`);
+    }
+
+    // D. Verify Amount Matches Server Order Total
+    const expectedPaise = Math.round(order.pricing.total * 100);
+    if (amountInPaise !== undefined && amountInPaise !== expectedPaise) {
+      res.status(400);
+      throw new Error(
+        `Transaction amount mismatch: Gateway reported ₹${(amountInPaise / 100).toFixed(2)}, expected ₹${order.pricing.total.toFixed(2)}. Fulfillment blocked.`
+      );
+    }
+
+    // E. Idempotent Order Fulfillment
+    const result = await fulfillOrderPayment({
+      order,
+      paymentId,
+      paymentMethod: 'Razorpay Webhook',
+      paymentDetails: {
+        razorpayOrderId: orderId,
+        razorpayPaymentId: paymentId,
+      },
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: result.alreadyFulfilled
+        ? 'Webhook received: Order already fulfilled (idempotent no-op)'
+        : 'Payment confirmed and order fulfilled successfully via webhook',
+      orderId,
+      idempotent: result.alreadyFulfilled,
+    });
+  }
+
+  // 3. Handle Payment Failed
+  if (eventType === 'payment.failed') {
+    const payment = event.payload?.payment?.entity;
+    const orderId = payment?.order_id;
+    const failureReason = payment?.error_description || 'Payment failed with provider';
+
+    if (orderId) {
+      const order = await Order.findOne({ orderId });
+      if (order && order.status === 'created') {
+        order.status = 'failed';
+        order.metadata = {
+          ...order.metadata,
+          failureReason,
+          failedAt: new Date(),
+        };
+        await order.save();
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payment failure recorded',
+      orderId,
+    });
+  }
+
+  // Other unhandled events: ACK with 200 OK
+  res.status(200).json({ success: true, message: `Event '${eventType}' acknowledged` });
 });
 
 // @desc    Pay for a checkout order using CRM Wallet Balance
@@ -484,5 +576,6 @@ module.exports = {
   payWithWallet,
   getOrders,
   getTransactions,
+  handleRazorpayWebhook,
 };
 

@@ -108,7 +108,11 @@ if (process.env.NODE_ENV !== 'test') {
 
 // Global API rate limiter (exempt webhooks from rate limiting)
 app.use('/api', (req, res, next) => {
-  if (req.path.startsWith('/whatsapp/webhook') || req.path.startsWith('/telephony/webhook')) {
+  if (
+    req.path.startsWith('/whatsapp/webhook') ||
+    req.path.startsWith('/telephony/webhook') ||
+    req.path.startsWith('/wallet/webhook')
+  ) {
     return next();
   }
   return generalLimiter(req, res, next);

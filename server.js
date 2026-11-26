@@ -42,7 +42,17 @@ const aiRoutes = require('./routes/aiRoutes');
 const { seedDefaultAutomations } = require('./services/automationService');
 const { seedCoupons } = require('./services/rewardService');
 const { startMeetingReminderScheduler } = require('./services/meetingReminderService');
-const { generalLimiter } = require('./middleware/rateLimiter');
+const {
+  generalLimiter,
+  webhookLimiter,
+  uploadExportLimiter,
+  getTrustedProxyConfig,
+} = require('./middleware/rateLimiter');
+const {
+  requestSizeLimiter,
+  requestTimeoutMiddleware,
+  applyServerTimeouts,
+} = require('./middleware/resourceProtection');
 
 connectDB().then(async () => {
   try {
@@ -57,8 +67,8 @@ seedDefaultAutomations();
 
 const app = express();
 
-// Trust reverse proxy (Render, Cloudflare) so rate-limiter & req.ip inspect real client IP in X-Forwarded-For
-app.set('trust proxy', 1);
+// Trust reverse proxy (Render, Cloudflare) with validated hop count to prevent IP spoofing
+app.set('trust proxy', getTrustedProxyConfig());
 
 // HTTP Security Headers & Restrictive Content-Security-Policy
 app.use((req, res, next) => {
@@ -78,6 +88,9 @@ app.use((req, res, next) => {
 
 // ================= MIDDLEWARE =================
 app.use(compression());
+
+// Request size limiter: Inspect Content-Length before body parsing to mitigate memory exhaustion
+app.use(requestSizeLimiter());
 
 const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000')
   .split(',')
@@ -107,26 +120,30 @@ app.use(
 
 app.use(
   express.json({
+    limit: '1mb',
     verify: (req, res, buf) => {
       req.rawBody = buf;
     },
   })
 );
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(cookieParser());
+
+// Standard request execution timeout (30 seconds)
+app.use(requestTimeoutMiddleware(30));
 
 if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Global API rate limiter (exempt webhooks from rate limiting)
+// Global API rate limiting with specialized webhook throttle
 app.use('/api', (req, res, next) => {
   if (
     req.path.startsWith('/whatsapp/webhook') ||
     req.path.startsWith('/telephony/webhook') ||
     req.path.startsWith('/wallet/webhook')
   ) {
-    return next();
+    return webhookLimiter(req, res, next);
   }
   return generalLimiter(req, res, next);
 });
@@ -303,7 +320,7 @@ app.use(['/api/ai', '/ai'], aiRoutes);
 
 // Secure uploads endpoint - verifies authentication, object-level access control & defensive headers
 const { serveSecureUpload } = require('./controllers/fileController');
-app.get('/uploads/:category/:filename', serveSecureUpload);
+app.get('/uploads/:category/:filename', uploadExportLimiter, serveSecureUpload);
 app.all(['/uploads', '/uploads/:category'], (req, res) => {
   res.status(403).json({
     success: false,
@@ -322,7 +339,7 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(
     `Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`
   );
@@ -334,3 +351,6 @@ app.listen(PORT, () => {
     console.warn('[Baileys] Init error:', bErr.message);
   }
 });
+
+// Configure defensive socket, header, keep-alive and request timeouts
+applyServerTimeouts(server);

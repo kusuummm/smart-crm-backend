@@ -21,15 +21,15 @@ const {
   refreshToken,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
-const { authLimiter } = require('../middleware/rateLimiter');
+const { authLimiter, passwordResetLimiter } = require('../middleware/rateLimiter');
 
 // Public Authentication (Rate limited to guard against brute-force attacks)
 router.post('/login', authLimiter, login);
 router.post('/register', authLimiter, register);
 router.post('/register/send-otp', authLimiter, registerSendOtp);
 router.post('/register/verify-otp', authLimiter, registerVerifyOtp);
-router.post('/forgot-password/send-otp', authLimiter, forgotPasswordSendOtp);
-router.post('/forgot-password/verify-reset', authLimiter, forgotPasswordVerifyReset);
+router.post('/forgot-password/send-otp', passwordResetLimiter, forgotPasswordSendOtp);
+router.post('/forgot-password/verify-reset', passwordResetLimiter, forgotPasswordVerifyReset);
 router.post('/2fa/verify', authLimiter, verify2FA);
 router.post('/refresh', authLimiter, refreshToken);
 

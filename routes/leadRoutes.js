@@ -14,10 +14,11 @@ const {
   receiveInboundEmail,
 } = require('../controllers/emailController');
 const { protect, authorize } = require('../middleware/auth');
+const { uploadExportLimiter } = require('../middleware/rateLimiter');
 
 router.use(protect);
 
-router.post('/bulk-import', authorize('manager'), bulkImportLeads);
+router.post('/bulk-import', authorize('manager'), uploadExportLimiter, bulkImportLeads);
 router.route('/').post(authorize('admin', 'telecaller', 'member', 'manager'), createLead).get(getLeads);
 router.route('/:id').get(getLeadById).delete(authorize('admin'), deleteLead);
 router.put('/:id/status', updateLeadStatus);

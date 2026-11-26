@@ -101,12 +101,14 @@ const serveSecureUpload = async (req, res) => {
       ],
     }).populate('customerId');
 
+    const currentUserId = String(user.id || user._id || user.sub || '');
+
     if (application) {
       let isAuthorized = false;
 
       // A. If user is the applicant / customer
-      const custId = application.customerId?._id || application.customerId;
-      if (String(custId) === String(user._id) || (user.customerId && String(custId) === String(user.customerId))) {
+      const custId = String(application.customerId?._id || application.customerId || '');
+      if (custId && (custId === currentUserId || (user.customerId && custId === String(user.customerId)))) {
         isAuthorized = true;
       }
 
@@ -115,8 +117,8 @@ const serveSecureUpload = async (req, res) => {
         const customer = application.customerId;
         if (customer) {
           const isAssigned =
-            (customer.telecallerId && String(customer.telecallerId) === String(user._id)) ||
-            customer.assignedTelecaller === user.name;
+            (customer.telecallerId && String(customer.telecallerId) === currentUserId) ||
+            (user.name && customer.assignedTelecaller === user.name);
           if (isAssigned) {
             isAuthorized = true;
           }

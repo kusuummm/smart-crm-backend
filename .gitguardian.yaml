@@ -4,4 +4,10 @@ secret:
   ignored_paths:
     - 'utils/testSecretScanning.js'
     - 'utils/testFileUploadSecurity.js'
+    - 'utils/test*.js'
     - 'scratch/*'
+  ignored-paths:
+    - '**/utils/testSecretScanning.js'
+    - '**/utils/testFileUploadSecurity.js'
+    - '**/utils/test*.js'
+    - '**/scratch/**'

@@ -255,9 +255,16 @@ const updateUser = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  const callerRole = (req.user?.role || '').toLowerCase();
+
+  // Hierarchy guard: Non-owners cannot modify an Owner account
+  if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can modify an Owner account');
+  }
+
   const { name, phone, role } = req.body;
   const oldName = user.name;
-  const callerRole = (req.user?.role || '').toLowerCase();
 
   if (name) user.name = name.trim();
   if (phone !== undefined) user.phone = phone;
@@ -551,6 +558,12 @@ const approveUser = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can approve an Owner account');
+  }
+
   user.status = 'active';
   user.isApproved = true;
   await user.save();
@@ -570,6 +583,12 @@ const rejectUser = asyncHandler(async (req, res) => {
   if (!user) {
     res.status(404);
     throw new Error('User not found');
+  }
+
+  const callerRole = (req.user?.role || '').toLowerCase();
+  if (user.role?.toLowerCase() === 'owner' && callerRole !== 'owner') {
+    res.status(403);
+    throw new Error('Only an organization Owner can reject an Owner account');
   }
 
   user.status = 'rejected';

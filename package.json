@@ -11,11 +11,12 @@
     "test:email": "node utils/testEmail.js",
     "test:apis": "node utils/testAllApis.js",
     "test:emails": "node utils/testAllEmails.js",
-    "test:security": "node utils/testAccessControl.js && node utils/testCrossAccountIsolation.js && node utils/testPricingIntegrity.js && node utils/testPaymentVerification.js && node utils/testRewardIntegrity.js",
+    "test:security": "node utils/testAccessControl.js && node utils/testCrossAccountIsolation.js && node utils/testPricingIntegrity.js && node utils/testPaymentVerification.js && node utils/testRewardIntegrity.js && node utils/testRoleAuthorization.js",
     "test:isolation": "node utils/testCrossAccountIsolation.js",
     "test:pricing": "node utils/testPricingIntegrity.js",
     "test:payment": "node utils/testPaymentVerification.js",
-    "test:rewards": "node utils/testRewardIntegrity.js"
+    "test:rewards": "node utils/testRewardIntegrity.js",
+    "test:roles": "node utils/testRoleAuthorization.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

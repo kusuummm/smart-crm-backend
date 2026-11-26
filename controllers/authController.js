@@ -145,9 +145,44 @@ const updateMe = asyncHandler(async (req, res) => {
   }
 
   const user = await User.findById(req.user._id);
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  // Security guard: Prevent unauthorized mass assignment / privilege escalation on privileged fields
+  const PRIVILEGED_FIELDS = [
+    'role',
+    'status',
+    'isApproved',
+    'balance',
+    'referralCode',
+    'referredBy',
+    'isOnline',
+    'lastActive',
+    'email',
+    'password',
+  ];
+
+  const attemptedPrivilegedFields = PRIVILEGED_FIELDS.filter(
+    (field) => req.body[field] !== undefined && String(req.body[field]) !== String(user[field])
+  );
+
+  if (attemptedPrivilegedFields.length > 0) {
+    res.status(403);
+    throw new Error(
+      `Unauthorized modification of privileged field(s): ${attemptedPrivilegedFields.join(', ')}`
+    );
+  }
+
   user.name = name.trim();
   if (phone !== undefined) user.phone = phone;
-  user.avatar = user.name.split(' ').map((w) => w[0]).join('').substring(0, 2).toUpperCase();
+  user.avatar = user.name
+    .split(' ')
+    .map((w) => w[0])
+    .join('')
+    .substring(0, 2)
+    .toUpperCase();
   await user.save();
 
   res.json({

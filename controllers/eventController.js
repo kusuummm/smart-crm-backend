@@ -8,6 +8,7 @@ const Event = require('../models/Event');
 const Customer = require('../models/Customer');
 const sendEmail = require('../utils/sendEmail');
 const { sendWhatsAppText } = require('../utils/sendWhatsApp');
+const { escapeHtml } = require('../utils/sanitizeHtml');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -173,8 +174,8 @@ const triggerReminder = asyncHandler(async (req, res) => {
   if (via.includes('email') && customer.email) {
     const emailResult = await sendEmail({
       to: customer.email,
-      subject: `Reminder: ${event.description || event.type}`,
-      html: `Dear ${customer.name},<br/><br/>This is a reminder regarding: ${event.description || event.type} on ${event.date}.<br/><br/>Best regards,<br/>SmartCRM Team`,
+      subject: `Reminder: ${escapeHtml(event.description || event.type)}`,
+      html: `Dear ${escapeHtml(customer.name)},<br/><br/>This is a reminder regarding: ${escapeHtml(event.description || event.type)} on ${escapeHtml(event.date)}.<br/><br/>Best regards,<br/>SmartCRM Team`,
     });
     results.email = emailResult.success;
     event.remindedVia.email = emailResult.success;

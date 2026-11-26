@@ -3,6 +3,7 @@ const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
 const User = require('../models/User');
 const whatsAppNotificationService = require('./whatsAppNotificationService');
+const { escapeHtml } = require('../utils/sanitizeHtml');
 
 const STATUS_LABELS = {
   'new': 'New Follow-up',
@@ -40,10 +41,12 @@ const getStatusBadgeColor = (status) => {
  * Builds HTML email for the Customer informing them of a follow-up status change
  */
 const buildCustomerFollowUpHtml = ({ customer, telecaller, newStatus, remark }) => {
-  const statusLabel = STATUS_LABELS[newStatus] || newStatus?.toUpperCase() || 'Follow-up Updated';
+  const statusLabel = escapeHtml(STATUS_LABELS[newStatus] || newStatus?.toUpperCase() || 'Follow-up Updated');
   const badgeColor = getStatusBadgeColor(newStatus);
-  const telecallerName = telecaller?.name || 'Customer Relationship Team';
-  const telecallerContact = telecaller?.phone || telecaller?.email || '';
+  const telecallerName = escapeHtml(telecaller?.name || 'Customer Relationship Team');
+  const telecallerContact = escapeHtml(telecaller?.phone || telecaller?.email || '');
+  const customerName = escapeHtml(customer?.name || 'Valued Member');
+  const safeRemark = remark ? escapeHtml(remark) : '';
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -64,7 +67,7 @@ const buildCustomerFollowUpHtml = ({ customer, telecaller, newStatus, remark }) 
           </tr>
           <tr>
             <td style="padding: 32px; font-size: 15px; line-height: 1.6; color: #334155;">
-              <p style="margin-top: 0; font-size: 16px;">Dear <strong>${customer.name}</strong>,</p>
+              <p style="margin-top: 0; font-size: 16px;">Dear <strong>${customerName}</strong>,</p>
               <p style="color: #475569;">
                 We are writing to inform you that your inquiry follow-up status has been updated:
               </p>
@@ -75,10 +78,10 @@ const buildCustomerFollowUpHtml = ({ customer, telecaller, newStatus, remark }) 
                 </span>
               </div>
 
-              ${remark ? `
+              ${safeRemark ? `
               <div style="background-color: #f8fafc; border-left: 4px solid #4f46e5; padding: 14px 18px; border-radius: 6px; margin: 20px 0;">
                 <p style="font-size: 11px; font-weight: 700; color: #64748b; margin: 0 0 4px; text-transform: uppercase; letter-spacing: 0.5px;">Notes &amp; Discussion Summary</p>
-                <p style="font-size: 14px; margin: 0; color: #1e293b;">${remark}</p>
+                <p style="font-size: 14px; margin: 0; color: #1e293b;">${safeRemark}</p>
               </div>` : ''}
 
               <div style="background-color: #f1f5f9; padding: 16px 20px; border-radius: 8px; margin-top: 24px; font-size: 13px;">
@@ -761,6 +764,7 @@ const sendNewCustomerLeadEmails = async ({ customer, lead, updatedByUser, remark
 
 module.exports = {
   STATUS_LABELS,
+  buildCustomerFollowUpHtml,
   sendFollowUpStatusChangeEmails,
   sendFollowUpScheduleEmails,
   sendNewCustomerLeadEmails,

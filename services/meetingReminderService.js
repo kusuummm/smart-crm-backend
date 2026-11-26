@@ -4,6 +4,7 @@ const EmailLog = require('../models/EmailLog');
 const WhatsAppLog = require('../models/WhatsAppLog');
 const sendEmail = require('../utils/sendEmail');
 const { sendWhatsAppText, sendWhatsAppTemplate } = require('../utils/sendWhatsApp');
+const { escapeHtml, sanitizeUrl } = require('../utils/sanitizeHtml');
 
 // The 6 Cadence Stages:
 // Stage 1: 3 hours prior (T - 180m)
@@ -90,8 +91,17 @@ const REMINDER_STAGES = [
 // Clean HTML email template for customer/lead reminder
 const getCustomerReminderHtml = (meeting, stageConfig) => {
   const badgeColor = stageConfig?.badgeColor || '#4f46e5';
-  const badgeText = stageConfig?.badgeText || 'Meeting Reminder';
-  const urgencyText = stageConfig?.urgencyText || `Your meeting starts in approximately 1 hour.`;
+  const badgeText = escapeHtml(stageConfig?.badgeText || 'Meeting Reminder');
+  const urgencyText = escapeHtml(stageConfig?.urgencyText || `Your meeting starts in approximately 1 hour.`);
+  const safeTitle = escapeHtml(meeting.title || 'Meeting Reminder');
+  const safeCustomerName = escapeHtml(meeting.customerName || 'Customer');
+  const safeDate = escapeHtml(meeting.date || '');
+  const safeTime = escapeHtml(meeting.time || '');
+  const safeDuration = escapeHtml(meeting.duration || '30 mins');
+  const safeTelecallerName = escapeHtml(meeting.telecallerName || 'Advisor');
+  const safeTelecallerEmail = escapeHtml(meeting.telecallerEmail || 'CRM Team');
+  const safeAgenda = meeting.agenda ? escapeHtml(meeting.agenda) : '';
+  const safeMeetingLink = meeting.meetingLink ? sanitizeUrl(meeting.meetingLink) : '';
 
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
@@ -100,11 +110,11 @@ const getCustomerReminderHtml = (meeting, stageConfig) => {
           ${badgeText}
         </span>
         <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">Meeting Reminder</h1>
-        <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.95;">${meeting.title}</p>
+        <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.95;">${safeTitle}</p>
       </div>
 
       <div style="padding: 24px;">
-        <p style="font-size: 15px; margin-top: 0;">Dear <strong>${meeting.customerName}</strong>,</p>
+        <p style="font-size: 15px; margin-top: 0;">Dear <strong>${safeCustomerName}</strong>,</p>
         <p style="font-size: 14px; color: #334155;">
           ${urgencyText}
         </p>
@@ -113,41 +123,41 @@ const getCustomerReminderHtml = (meeting, stageConfig) => {
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr>
               <td style="padding: 6px 0; color: #64748b; width: 130px;"><strong>Meeting Title:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${meeting.title}</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${safeTitle}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Date:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a;">${meeting.date}</td>
+              <td style="padding: 6px 0; color: #0f172a;">${safeDate}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Scheduled Time:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${meeting.time} (${meeting.duration || '30 mins'})</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeTime} (${safeDuration})</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Assigned Host:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a;">${meeting.telecallerName} (${meeting.telecallerEmail || 'CRM Team'})</td>
+              <td style="padding: 6px 0; color: #0f172a;">${safeTelecallerName} (${safeTelecallerEmail})</td>
             </tr>
-            ${meeting.agenda ? `
+            ${safeAgenda ? `
             <tr>
               <td style="padding: 6px 0; color: #64748b; vertical-align: top;"><strong>Agenda:</strong></td>
-              <td style="padding: 6px 0; color: #334155;">${meeting.agenda}</td>
+              <td style="padding: 6px 0; color: #334155;">${safeAgenda}</td>
             </tr>` : ''}
           </table>
         </div>
 
-        ${meeting.meetingLink ? `
+        ${safeMeetingLink && safeMeetingLink !== '#' ? `
         <div style="text-align: center; margin: 28px 0;">
-          <a href="${meeting.meetingLink}" target="_blank" style="display: inline-block; background-color: ${badgeColor}; color: #ffffff; font-weight: 700; font-size: 15px; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+          <a href="${safeMeetingLink}" target="_blank" style="display: inline-block; background-color: ${badgeColor}; color: #ffffff; font-weight: 700; font-size: 15px; text-decoration: none; padding: 12px 28px; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
             👉 Join Meeting Room Online
           </a>
-          <p style="font-size: 12px; color: #64748b; margin-top: 8px;">Direct link: <a href="${meeting.meetingLink}" style="color: ${badgeColor};">${meeting.meetingLink}</a></p>
+          <p style="font-size: 12px; color: #64748b; margin-top: 8px;">Direct link: <a href="${safeMeetingLink}" style="color: ${badgeColor};">${safeMeetingLink}</a></p>
         </div>` : `
         <div style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 12px; font-size: 13px; color: #1e40af;">
-          📞 Your assigned host <strong>${meeting.telecallerName}</strong> will call your phone directly at the scheduled time.
+          📞 Your assigned host <strong>${safeTelecallerName}</strong> will call your phone directly at the scheduled time.
         </div>`}
 
         <p style="font-size: 12px; color: #94a3b8; margin-top: 24px; border-top: 1px solid #f1f5f9; padding-top: 12px;">
-          Smart CRM Automated Notification System • If you need to reschedule, please reply to this email or contact <a href="mailto:${meeting.telecallerEmail}" style="color: ${badgeColor};">${meeting.telecallerEmail}</a>.
+          Smart CRM Automated Notification System • If you need to reschedule, please reply to this email or contact <a href="mailto:${safeTelecallerEmail}" style="color: ${badgeColor};">${safeTelecallerEmail}</a>.
         </p>
       </div>
     </div>
@@ -157,7 +167,17 @@ const getCustomerReminderHtml = (meeting, stageConfig) => {
 // Clean HTML email template for telecaller/host reminder
 const getCallerReminderHtml = (meeting, stageConfig) => {
   const badgeColor = stageConfig?.badgeColor || '#059669';
-  const badgeText = stageConfig?.badgeText || 'Host Reminder';
+  const badgeText = escapeHtml(stageConfig?.badgeText || 'Host Reminder');
+  const safeCustomerName = escapeHtml(meeting.customerName || 'Client');
+  const safeCustomerPhone = escapeHtml(meeting.customerPhone || 'N/A');
+  const safeCustomerEmail = escapeHtml(meeting.customerEmail || '');
+  const safeTelecallerName = escapeHtml(meeting.telecallerName || 'Host');
+  const safeTitle = escapeHtml(meeting.title || 'Client Consultation');
+  const safeDate = escapeHtml(meeting.date || '');
+  const safeTime = escapeHtml(meeting.time || '');
+  const safeDuration = escapeHtml(meeting.duration || '30 mins');
+  const safeAgenda = meeting.agenda ? escapeHtml(meeting.agenda) : '';
+  const safeMeetingLink = meeting.meetingLink ? sanitizeUrl(meeting.meetingLink) : '';
 
   return `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
@@ -166,48 +186,48 @@ const getCallerReminderHtml = (meeting, stageConfig) => {
           ${badgeText}
         </span>
         <h1 style="margin: 0; font-size: 22px; font-weight: 700; color: #ffffff;">Upcoming Lead Consultation</h1>
-        <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.95;">With ${meeting.customerName}</p>
+        <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.95;">With ${safeCustomerName}</p>
       </div>
 
       <div style="padding: 24px;">
-        <p style="font-size: 15px; margin-top: 0;">Hello <strong>${meeting.telecallerName}</strong>,</p>
+        <p style="font-size: 15px; margin-top: 0;">Hello <strong>${safeTelecallerName}</strong>,</p>
         <p style="font-size: 14px; color: #334155;">
-          You have an upcoming meeting scheduled with client <strong>${meeting.customerName}</strong> starting in <strong>${stageConfig?.timeRemainingText || 'shortly'}</strong>.
+          You have an upcoming meeting scheduled with client <strong>${safeCustomerName}</strong> starting in <strong>${stageConfig?.timeRemainingText || 'shortly'}</strong>.
         </p>
 
         <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; margin: 20px 0;">
           <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
             <tr>
               <td style="padding: 6px 0; color: #64748b; width: 130px;"><strong>Client Name:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${meeting.customerName}</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeCustomerName}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Client Contact:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-family: monospace;">${meeting.customerPhone || 'N/A'}</td>
+              <td style="padding: 6px 0; color: #0f172a; font-family: monospace;">${safeCustomerPhone}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Client Email:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a;"><a href="mailto:${meeting.customerEmail}" style="color: ${badgeColor};">${meeting.customerEmail}</a></td>
+              <td style="padding: 6px 0; color: #0f172a;"><a href="mailto:${safeCustomerEmail}" style="color: ${badgeColor};">${safeCustomerEmail}</a></td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Meeting Title:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${meeting.title}</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${safeTitle}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b;"><strong>Time:</strong></td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${meeting.date} at ${meeting.time} (${meeting.duration || '30 mins'})</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${safeDate} at ${safeTime} (${safeDuration})</td>
             </tr>
-            ${meeting.agenda ? `
+            ${safeAgenda ? `
             <tr>
               <td style="padding: 6px 0; color: #64748b; vertical-align: top;"><strong>Agenda:</strong></td>
-              <td style="padding: 6px 0; color: #334155;">${meeting.agenda}</td>
+              <td style="padding: 6px 0; color: #334155;">${safeAgenda}</td>
             </tr>` : ''}
           </table>
         </div>
 
-        ${meeting.meetingLink ? `
+        ${safeMeetingLink && safeMeetingLink !== '#' ? `
         <div style="text-align: center; margin: 28px 0;">
-          <a href="${meeting.meetingLink}" target="_blank" style="display: inline-block; background-color: ${badgeColor}; color: #ffffff; font-weight: 700; font-size: 15px; text-decoration: none; padding: 12px 28px; border-radius: 8px;">
+          <a href="${safeMeetingLink}" target="_blank" style="display: inline-block; background-color: ${badgeColor}; color: #ffffff; font-weight: 700; font-size: 15px; text-decoration: none; padding: 12px 28px; border-radius: 8px;">
             🚀 Open Host Meeting Room
           </a>
         </div>` : ''}

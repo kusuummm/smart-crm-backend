@@ -8,6 +8,7 @@ const EmailLog = require('../models/EmailLog');
 const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
 const sendEmail = require('../utils/sendEmail');
+const { escapeHtml, sanitizeEmailHtml } = require('../utils/sanitizeHtml');
 
 const getTelecallerCustomerIds = async (user) => {
   return await Customer.find({
@@ -103,7 +104,7 @@ const sendCustomerEmail = asyncHandler(async (req, res) => {
   const result = await sendEmail({
     to: customer.email,
     subject: finalSubject,
-    html: finalBody.replace(/\n/g, '<br/>'),
+    html: sanitizeEmailHtml(escapeHtml(finalBody).replace(/\n/g, '<br/>')),
   });
 
   const log = await EmailLog.create({
@@ -170,8 +171,10 @@ const receiveInboundEmail = asyncHandler(async (req, res) => {
   } = req.body;
 
   const senderEmail = (from || sender || req.body['from-address'] || '').toLowerCase().trim();
-  const emailSubject = subject || req.body['subject'] || req.body['message-subject'] || 'Inbound Message from Lead';
-  const emailBody = body || text || req.body['body-plain'] || html || 'No content';
+  const rawSubject = subject || req.body['subject'] || req.body['message-subject'] || 'Inbound Message from Lead';
+  const rawBody = body || text || req.body['body-plain'] || html || 'No content';
+  const emailSubject = escapeHtml(rawSubject);
+  const emailBody = sanitizeEmailHtml(rawBody);
 
   if (!senderEmail || !senderEmail.includes('@')) {
     res.status(400);

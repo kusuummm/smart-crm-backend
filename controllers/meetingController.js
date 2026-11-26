@@ -10,6 +10,7 @@ const Lead = require('../models/Lead');
 const User = require('../models/User');
 const EmailLog = require('../models/EmailLog');
 const sendEmail = require('../utils/sendEmail');
+const { escapeHtml, sanitizeUrl } = require('../utils/sanitizeHtml');
 const {
   getCustomerReminderHtml,
   getCallerReminderHtml,
@@ -119,20 +120,30 @@ const createMeeting = asyncHandler(async (req, res) => {
   // Send immediate confirmation email to both parties
   try {
     const confirmationSubject = `Meeting Confirmed: ${meeting.title} on ${meeting.date} at ${meeting.time}`;
-    
+    const safeTitle = escapeHtml(meeting.title);
+    const safeCustName = escapeHtml(meeting.customerName);
+    const safeCallerName = escapeHtml(meeting.telecallerName);
+    const safeDate = escapeHtml(meeting.date);
+    const safeTime = escapeHtml(meeting.time);
+    const safeDuration = escapeHtml(meeting.duration);
+    const safeMeetingLink = meeting.meetingLink ? sanitizeUrl(meeting.meetingLink) : '';
+    const safeAgenda = meeting.agenda ? escapeHtml(meeting.agenda) : '';
+    const safeCustPhone = escapeHtml(meeting.customerPhone || 'No phone');
+    const safeCustEmail = escapeHtml(meeting.customerEmail || '');
+
     // 1. Email to Customer
     if (effectiveCustomerEmail && effectiveCustomerEmail.includes('@')) {
       const custConfirmHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b;">
           <h2 style="color: #4f46e5; margin-top: 0;">Meeting Scheduled Successfully</h2>
-          <p>Dear <strong>${meeting.customerName}</strong>,</p>
-          <p>Your meeting with <strong>${meeting.telecallerName}</strong> has been confirmed.</p>
+          <p>Dear <strong>${safeCustName}</strong>,</p>
+          <p>Your meeting with <strong>${safeCallerName}</strong> has been confirmed.</p>
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 4px 0;"><strong>Title:</strong> ${meeting.title}</p>
-            <p style="margin: 4px 0;"><strong>Date:</strong> ${meeting.date}</p>
-            <p style="margin: 4px 0;"><strong>Time:</strong> ${meeting.time} (${meeting.duration})</p>
-            ${meeting.meetingLink ? `<p style="margin: 4px 0;"><strong>Link:</strong> <a href="${meeting.meetingLink}">${meeting.meetingLink}</a></p>` : ''}
-            ${meeting.agenda ? `<p style="margin: 4px 0;"><strong>Agenda:</strong> ${meeting.agenda}</p>` : ''}
+            <p style="margin: 4px 0;"><strong>Title:</strong> ${safeTitle}</p>
+            <p style="margin: 4px 0;"><strong>Date:</strong> ${safeDate}</p>
+            <p style="margin: 4px 0;"><strong>Time:</strong> ${safeTime} (${safeDuration})</p>
+            ${safeMeetingLink && safeMeetingLink !== '#' ? `<p style="margin: 4px 0;"><strong>Link:</strong> <a href="${safeMeetingLink}">${safeMeetingLink}</a></p>` : ''}
+            ${safeAgenda ? `<p style="margin: 4px 0;"><strong>Agenda:</strong> ${safeAgenda}</p>` : ''}
           </div>
           <p style="font-size: 13px; color: #64748b;">You will receive an automated reminder 1 hour prior to the meeting.</p>
         </div>
@@ -162,15 +173,15 @@ const createMeeting = asyncHandler(async (req, res) => {
       const callerConfirmHtml = `
         <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b;">
           <h2 style="color: #059669; margin-top: 0;">New Meeting Scheduled on Your Calendar</h2>
-          <p>Hello <strong>${meeting.telecallerName}</strong>,</p>
-          <p>A meeting has been scheduled with customer <strong>${meeting.customerName}</strong>.</p>
+          <p>Hello <strong>${safeCallerName}</strong>,</p>
+          <p>A meeting has been scheduled with customer <strong>${safeCustName}</strong>.</p>
           <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 4px 0;"><strong>Client:</strong> ${meeting.customerName} (${meeting.customerPhone || 'No phone'})</p>
-            <p style="margin: 4px 0;"><strong>Client Email:</strong> ${meeting.customerEmail}</p>
-            <p style="margin: 4px 0;"><strong>Title:</strong> ${meeting.title}</p>
-            <p style="margin: 4px 0;"><strong>Date:</strong> ${meeting.date}</p>
-            <p style="margin: 4px 0;"><strong>Time:</strong> ${meeting.time} (${meeting.duration})</p>
-            ${meeting.meetingLink ? `<p style="margin: 4px 0;"><strong>Link:</strong> <a href="${meeting.meetingLink}">${meeting.meetingLink}</a></p>` : ''}
+            <p style="margin: 4px 0;"><strong>Client:</strong> ${safeCustName} (${safeCustPhone})</p>
+            <p style="margin: 4px 0;"><strong>Client Email:</strong> ${safeCustEmail}</p>
+            <p style="margin: 4px 0;"><strong>Title:</strong> ${safeTitle}</p>
+            <p style="margin: 4px 0;"><strong>Date:</strong> ${safeDate}</p>
+            <p style="margin: 4px 0;"><strong>Time:</strong> ${safeTime} (${safeDuration})</p>
+            ${safeMeetingLink && safeMeetingLink !== '#' ? `<p style="margin: 4px 0;"><strong>Link:</strong> <a href="${safeMeetingLink}">${safeMeetingLink}</a></p>` : ''}
           </div>
           <p style="font-size: 13px; color: #64748b;">An automated reminder will be emailed to both you and the client 1 hour prior to the meeting.</p>
         </div>

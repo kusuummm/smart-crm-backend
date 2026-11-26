@@ -120,6 +120,7 @@ const PUBLIC_WHITELIST = [
   /^\/(api\/)?auth\/register\/verify-otp$/i,
   /^\/(api\/)?auth\/forgot-password\/send-otp$/i,
   /^\/(api\/)?auth\/forgot-password\/verify-reset$/i,
+  /^\/(api\/)?auth\/2fa\/verify$/i,
   /^\/(api\/)?whatsapp\/webhook$/i,
   /^\/(api\/)?telephony\/webhook\/call$/i,
   /^\/(api\/)?telephony\/webhook\/recording$/i,

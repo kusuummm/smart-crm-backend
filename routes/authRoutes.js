@@ -15,6 +15,9 @@ const {
   forgotPasswordVerifyReset,
   changePasswordSendOtp,
   changePasswordWithOtp,
+  verify2FA,
+  enable2FA,
+  disable2FA,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
@@ -26,6 +29,7 @@ router.post('/register/send-otp', authLimiter, registerSendOtp);
 router.post('/register/verify-otp', authLimiter, registerVerifyOtp);
 router.post('/forgot-password/send-otp', authLimiter, forgotPasswordSendOtp);
 router.post('/forgot-password/verify-reset', authLimiter, forgotPasswordVerifyReset);
+router.post('/2fa/verify', authLimiter, verify2FA);
 
 // Private User Account & Session Management
 router.get('/me', protect, getMe);
@@ -35,6 +39,8 @@ router.delete('/sessions/:id', protect, revokeSession);
 router.put('/change-password', protect, changePassword);
 router.post('/profile/send-otp', protect, changePasswordSendOtp);
 router.put('/profile/change-password-otp', protect, changePasswordWithOtp);
+router.post('/2fa/enable', protect, enable2FA);
+router.post('/2fa/disable', protect, disable2FA);
 router.post('/logout', protect, logout);
 
 module.exports = router;

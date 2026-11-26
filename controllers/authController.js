@@ -32,9 +32,36 @@ const login = asyncHandler(async (req, res) => {
 
   const user = await User.findOne({ email: normalizedEmail }).select('+password');
 
+  // Account Lockout Protection against Brute-Force Credential Stuffing
+  if (user && user.lockUntil && user.lockUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.lockUntil.getTime() - Date.now()) / (60 * 1000));
+    res.status(429);
+    throw new Error(`Account temporarily locked due to multiple failed login attempts. Please try again in ${minutesLeft} minute(s) or reset your password.`);
+  }
+
   if (!user || !(await user.matchPassword(password))) {
+    if (user) {
+      user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+      if (user.failedLoginAttempts >= 5) {
+        user.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15-minute lockout
+        await user.save();
+        res.status(429);
+        throw new Error('Too many failed login attempts. Account temporarily locked for 15 minutes. Please reset your password or try again later.');
+      }
+      await user.save();
+      const attemptsRemaining = 5 - user.failedLoginAttempts;
+      res.status(401);
+      throw new Error(`Invalid credentials. ${attemptsRemaining} attempt(s) remaining before account lockout.`);
+    }
     res.status(401);
     throw new Error('Invalid credentials');
+  }
+
+  // Reset failed login attempts and lockout upon successful password match
+  if (user.failedLoginAttempts > 0 || user.lockUntil) {
+    user.failedLoginAttempts = 0;
+    user.lockUntil = null;
+    await user.save();
   }
 
   // Strict CRM Access Control: Only admin and member accounts can access the CRM
@@ -61,6 +88,40 @@ const login = asyncHandler(async (req, res) => {
   if (user.status !== 'active') {
     res.status(403);
     throw new Error('Your account is inactive. Please contact the administrator.');
+  }
+
+  // Two-Factor Authentication (2FA) Gate:
+  // If user has 2FA enabled, issue a 5-minute one-time verification code instead of immediate JWT
+  if (user.twoFactorEnabled) {
+    const otp = crypto.randomInt(100000, 1000000).toString();
+    await Otp.deleteMany({ email: normalizedEmail, purpose: '2fa_login' });
+    await Otp.create({
+      email: normalizedEmail,
+      otp,
+      purpose: '2fa_login',
+      metadata: {
+        userId: user._id.toString(),
+        role: user.role,
+      },
+      expiresAt: new Date(Date.now() + 5 * 60 * 1000), // Short 5-minute expiry
+    });
+
+    console.log(`\n========================================\n[2FA LOGIN OTP] 2FA Code for ${normalizedEmail}: ${otp}\n========================================\n`);
+
+    emailNotificationService.sendLoginVerificationEmail({
+      recipientEmail: normalizedEmail,
+      recipientName: user.name,
+      otp,
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'] || '',
+    }).catch(() => {});
+
+    return res.json({
+      success: true,
+      requires2FA: true,
+      email: normalizedEmail,
+      message: 'Two-factor authentication code sent to your email. Enter code to complete login.',
+    });
   }
 
   // SINGLE DEVICE POLICY FOR ADMIN ACCOUNT:
@@ -260,9 +321,20 @@ const changePassword = asyncHandler(async (req, res) => {
   }
 
   user.password = newPassword;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
   await user.save();
 
-  res.json({ success: true, message: 'Password updated successfully' });
+  // Invalidate any other active sessions across devices
+  await Session.deleteMany({
+    user: user._id,
+    ...(req.sessionId ? { tokenId: { $ne: req.sessionId } } : {}),
+  });
+
+  res.json({
+    success: true,
+    message: 'Password updated successfully. Other active sessions have been signed out.',
+  });
 });
 
 // @desc    Logout
@@ -321,7 +393,7 @@ const registerSendOtp = asyncHandler(async (req, res) => {
       phone: phone?.trim() || '',
       role: 'member',
     },
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000), // Short 5-minute expiry
   });
 
   console.log(`\n========================================\n[REGISTRATION OTP] OTP for ${normalizedEmail}: ${otp}\n========================================\n`);
@@ -382,39 +454,52 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
     throw new Error('No active verification code found or code expired. Please request a new verification code.');
   }
 
+  // Atomic attempt increment and threshold enforcement
   if (pendingOtp.otp !== cleanOtp) {
-    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
-    if (pendingOtp.attempts >= 5) {
+    const updatedOtp = await Otp.findOneAndUpdate(
+      { _id: pendingOtp._id },
+      { $inc: { attempts: 1 } },
+      { new: true }
+    );
+    if (updatedOtp && updatedOtp.attempts >= 5) {
       await Otp.deleteOne({ _id: pendingOtp._id });
       res.status(400);
       throw new Error('Too many invalid attempts. For your security, this verification code has been invalidated. Please request a new code.');
     }
+    const remaining = 5 - (updatedOtp?.attempts || 1);
     await pendingOtp.save();
     res.status(400);
-    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+    throw new Error(`Invalid verification code. ${remaining} attempts remaining.`);
   }
 
-  const otpDoc = pendingOtp;
+  // Atomic single-use consumption: verify and delete in one operation to prevent replay attacks
+  const consumedOtp = await Otp.findOneAndDelete({
+    _id: pendingOtp._id,
+    otp: cleanOtp,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!consumedOtp) {
+    res.status(400);
+    throw new Error('Verification code has already been used or expired. Please request a new code.');
+  }
 
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
-    await Otp.deleteOne({ _id: otpDoc._id });
     res.status(400);
     throw new Error('An account with this email already exists. Please sign in.');
   }
 
   // Register strictly as member upon successful OTP match
   const user = await User.create({
-    name: otpDoc.metadata.name,
+    name: consumedOtp.metadata.name,
     email: normalizedEmail,
-    password: otpDoc.metadata.password,
-    phone: otpDoc.metadata.phone || '',
+    password: consumedOtp.metadata.password,
+    phone: consumedOtp.metadata.phone || '',
     role: 'member',
     status: 'active',
     isApproved: true,
   });
-
-  await Otp.deleteOne({ _id: otpDoc._id });
 
   // Issue token and create session for seamless access
   const { token, sid } = generateToken(user._id, user.role);
@@ -501,7 +586,7 @@ const forgotPasswordSendOtp = asyncHandler(async (req, res) => {
     email: normalizedEmail,
     otp,
     purpose: 'forgot_password',
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000), // Short 5-minute expiry
   });
 
   console.log(`\n========================================\n[FORGOT PASSWORD OTP] Code for ${normalizedEmail}: ${otp}\n========================================\n`);
@@ -567,19 +652,34 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
     throw new Error('Reset code expired or not found. Please request a new one.');
   }
 
+  // Atomic attempt increment and threshold enforcement
   if (pendingOtp.otp !== cleanOtp) {
-    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
-    if (pendingOtp.attempts >= 5) {
+    const updatedOtp = await Otp.findOneAndUpdate(
+      { _id: pendingOtp._id },
+      { $inc: { attempts: 1 } },
+      { new: true }
+    );
+    if (updatedOtp && updatedOtp.attempts >= 5) {
       await Otp.deleteOne({ _id: pendingOtp._id });
       res.status(400);
       throw new Error('Too many failed attempts. This reset code has been invalidated for security. Please request a new one.');
     }
-    await pendingOtp.save();
+    const remaining = 5 - (updatedOtp?.attempts || 1);
     res.status(400);
-    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+    throw new Error(`Invalid verification code. ${remaining} attempts remaining.`);
   }
 
-  const otpDoc = pendingOtp;
+  // Atomic single-use consumption & replay protection
+  const consumedOtp = await Otp.findOneAndDelete({
+    _id: pendingOtp._id,
+    otp: cleanOtp,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!consumedOtp) {
+    res.status(400);
+    throw new Error('Reset code has already been used or expired. Please request a new one.');
+  }
 
   const user = await User.findOne({ email: normalizedEmail }).select('+password');
   if (!user) {
@@ -610,16 +710,14 @@ const forgotPasswordVerifyReset = asyncHandler(async (req, res) => {
     throw new Error('Your account is inactive. Please contact the administrator.');
   }
 
-  const isAdminRole = ['admin', 'owner'].includes(normalizedRole);
-  // Single-device policy for admin account
-  if (isAdminRole) {
-    await Session.deleteMany({ user: user._id });
-  }
+  // Secure session handling: Invalidate all existing sessions across all devices for this user
+  await Session.deleteMany({ user: user._id });
 
+  // Update password and reset lockout counters
   user.password = newPassword;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
   await user.save();
-
-  await Otp.deleteOne({ _id: otpDoc._id });
 
   // Issue new session and log in user directly
   const { token, sid } = generateToken(user._id, user.role);
@@ -660,7 +758,7 @@ const changePasswordSendOtp = asyncHandler(async (req, res) => {
     email: normalizedEmail,
     otp,
     purpose: 'change_password',
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+    expiresAt: new Date(Date.now() + 5 * 60 * 1000), // Short 5-minute expiry
   });
 
   const mailResult = await sendOtpEmail({
@@ -717,19 +815,34 @@ const changePasswordWithOtp = asyncHandler(async (req, res) => {
     throw new Error('No active verification code found or code expired. Please request a new code.');
   }
 
+  // Atomic attempt increment and threshold enforcement
   if (pendingOtp.otp !== cleanOtp) {
-    pendingOtp.attempts = (pendingOtp.attempts || 0) + 1;
-    if (pendingOtp.attempts >= 5) {
+    const updatedOtp = await Otp.findOneAndUpdate(
+      { _id: pendingOtp._id },
+      { $inc: { attempts: 1 } },
+      { new: true }
+    );
+    if (updatedOtp && updatedOtp.attempts >= 5) {
       await Otp.deleteOne({ _id: pendingOtp._id });
       res.status(400);
       throw new Error('Too many failed attempts. This code has been invalidated for security. Please request a new code.');
     }
-    await pendingOtp.save();
+    const remaining = 5 - (updatedOtp?.attempts || 1);
     res.status(400);
-    throw new Error(`Invalid verification code. ${5 - pendingOtp.attempts} attempts remaining.`);
+    throw new Error(`Invalid verification code. ${remaining} attempts remaining.`);
   }
 
-  const otpDoc = pendingOtp;
+  // Atomic single-use consumption & replay protection
+  const consumedOtp = await Otp.findOneAndDelete({
+    _id: pendingOtp._id,
+    otp: cleanOtp,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!consumedOtp) {
+    res.status(400);
+    throw new Error('Verification code has already been used or expired. Please request a new code.');
+  }
 
   const user = await User.findById(req.user._id).select('+password');
   if (!user) {
@@ -738,13 +851,162 @@ const changePasswordWithOtp = asyncHandler(async (req, res) => {
   }
 
   user.password = newPassword;
+  user.failedLoginAttempts = 0;
+  user.lockUntil = null;
   await user.save();
 
-  await Otp.deleteOne({ _id: otpDoc._id });
+  // Invalidate any other active sessions across devices
+  await Session.deleteMany({
+    user: user._id,
+    ...(req.sessionId ? { tokenId: { $ne: req.sessionId } } : {}),
+  });
 
   res.json({
     success: true,
-    message: 'Password updated successfully!',
+    message: 'Password updated successfully. Other active sessions have been signed out.',
+  });
+});
+
+// @desc    Verify 2FA login OTP and issue authenticated session
+// @route   POST /api/auth/2fa/verify
+// @access  Public
+const verify2FA = asyncHandler(async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    res.status(400);
+    throw new Error('Email and verification code are required');
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const cleanOtp = otp.toString().trim();
+
+  const pendingOtp = await Otp.findOne({
+    email: normalizedEmail,
+    purpose: '2fa_login',
+  });
+
+  if (!pendingOtp || pendingOtp.expiresAt < new Date()) {
+    res.status(400);
+    throw new Error('Two-factor verification code expired or not found. Please log in again.');
+  }
+
+  // Atomic attempt increment and threshold enforcement
+  if (pendingOtp.otp !== cleanOtp) {
+    const updated = await Otp.findOneAndUpdate(
+      { _id: pendingOtp._id },
+      { $inc: { attempts: 1 } },
+      { new: true }
+    );
+    if (updated && updated.attempts >= 5) {
+      await Otp.deleteOne({ _id: pendingOtp._id });
+      res.status(400);
+      throw new Error('Too many invalid 2FA attempts. Verification code has been invalidated. Please log in again.');
+    }
+    const remaining = 5 - (updated?.attempts || 1);
+    res.status(400);
+    throw new Error(`Invalid verification code. ${remaining} attempt(s) remaining.`);
+  }
+
+  // Atomic single-use consumption & replay protection
+  const consumedOtp = await Otp.findOneAndDelete({
+    _id: pendingOtp._id,
+    otp: cleanOtp,
+    expiresAt: { $gt: new Date() },
+  });
+
+  if (!consumedOtp) {
+    res.status(400);
+    throw new Error('Verification code has already been used or expired. Please log in again.');
+  }
+
+  const user = await User.findOne({ email: normalizedEmail });
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  let normalizedRole = (user.role || '').toLowerCase().trim();
+  if (normalizedRole === 'telecaller') normalizedRole = 'member';
+  const isAdminRole = ['admin', 'owner'].includes(normalizedRole);
+
+  let priorSessionsTerminated = 0;
+  if (isAdminRole) {
+    const delResult = await Session.deleteMany({ user: user._id });
+    priorSessionsTerminated = delResult.deletedCount || 0;
+  }
+
+  const { token, sid } = generateToken(user._id, user.role);
+
+  await Session.create({
+    user: user._id,
+    tokenId: sid,
+    userAgent: req.headers['user-agent'] || '',
+    ip: req.ip,
+  });
+
+  user.isOnline = true;
+  user.lastActive = new Date();
+  await user.save();
+
+  res.json({
+    success: true,
+    token,
+    priorSessionsTerminated,
+    singleDeviceEnforced: isAdminRole,
+    message: 'Two-factor authentication verified successfully. Signed in.',
+    user: {
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      avatar: user.avatar,
+      status: user.status,
+      phone: user.phone || '',
+      balance: user.balance || '₹0.0',
+      twoFactorEnabled: user.twoFactorEnabled,
+    },
+  });
+});
+
+// @desc    Enable Two-Factor Authentication for logged-in account
+// @route   POST /api/auth/2fa/enable
+// @access  Private
+const enable2FA = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id);
+  user.twoFactorEnabled = true;
+  await user.save();
+
+  res.json({
+    success: true,
+    twoFactorEnabled: true,
+    message: 'Two-factor authentication has been enabled for your account.',
+  });
+});
+
+// @desc    Disable Two-Factor Authentication for logged-in account
+// @route   POST /api/auth/2fa/disable
+// @access  Private
+const disable2FA = asyncHandler(async (req, res) => {
+  const { password } = req.body;
+  if (!password) {
+    res.status(400);
+    throw new Error('Current password is required to disable 2FA');
+  }
+
+  const user = await User.findById(req.user._id).select('+password');
+  if (!(await user.matchPassword(password))) {
+    res.status(401);
+    throw new Error('Incorrect password');
+  }
+
+  user.twoFactorEnabled = false;
+  await user.save();
+
+  res.json({
+    success: true,
+    twoFactorEnabled: false,
+    message: 'Two-factor authentication has been disabled for your account.',
   });
 });
 
@@ -763,4 +1025,7 @@ module.exports = {
   forgotPasswordVerifyReset,
   changePasswordSendOtp,
   changePasswordWithOtp,
+  verify2FA,
+  enable2FA,
+  disable2FA,
 };

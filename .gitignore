@@ -3,8 +3,16 @@ node_modules/
 
 # Environment Variables (Keep secrets private!)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+*.env
+
+# Certificates & Credentials
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
 
 # Logs
 logs
@@ -24,4 +32,3 @@ uploads/*
 # Baileys WhatsApp Session Auth Info
 auth_info_baileys/
 auth_info_baileys/*
-

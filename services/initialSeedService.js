@@ -16,6 +16,11 @@ const Wallet = require('../models/Wallet');
  */
 const seedInitialDataIfEmpty = async () => {
   try {
+    if (process.env.NODE_ENV === 'production') {
+      console.log('[InitialSeedService] Production environment detected: Auto-seeding default credentials disabled.');
+      return { seeded: false, reason: 'Auto-seeding default credentials disabled in production' };
+    }
+
     const customerCount = await Customer.countDocuments();
     if (customerCount > 0) {
       // Database already has customers - no need to auto-seed

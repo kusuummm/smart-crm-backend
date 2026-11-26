@@ -11,7 +11,7 @@
     "test:email": "node utils/testEmail.js",
     "test:apis": "node utils/testAllApis.js",
     "test:emails": "node utils/testAllEmails.js",
-    "test:security": "node utils/testAccessControl.js && node utils/testCrossAccountIsolation.js && node utils/testPricingIntegrity.js && node utils/testPaymentVerification.js && node utils/testRewardIntegrity.js && node utils/testRoleAuthorization.js && node utils/testAuthSecurity.js && node utils/testAiSecurity.js && node utils/testXssSecurity.js && node utils/testFileUploadSecurity.js",
+    "test:security": "node utils/testAccessControl.js && node utils/testCrossAccountIsolation.js && node utils/testPricingIntegrity.js && node utils/testPaymentVerification.js && node utils/testRewardIntegrity.js && node utils/testRoleAuthorization.js && node utils/testAuthSecurity.js && node utils/testAiSecurity.js && node utils/testXssSecurity.js && node utils/testFileUploadSecurity.js && node utils/testSecretScanning.js",
     "test:isolation": "node utils/testCrossAccountIsolation.js",
     "test:pricing": "node utils/testPricingIntegrity.js",
     "test:payment": "node utils/testPaymentVerification.js",
@@ -20,7 +20,9 @@
     "test:auth": "node utils/testAuthSecurity.js",
     "test:ai": "node utils/testAiSecurity.js",
     "test:xss": "node utils/testXssSecurity.js",
-    "test:upload": "node utils/testFileUploadSecurity.js"
+    "test:upload": "node utils/testFileUploadSecurity.js",
+    "test:secrets": "node utils/testSecretScanning.js",
+    "scan:secrets": "node utils/secretScanner.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

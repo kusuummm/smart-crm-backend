@@ -1,0 +1,7 @@
+# GitGuardian Configuration
+version: 2
+secret:
+  ignored_paths:
+    - 'utils/testSecretScanning.js'
+    - 'utils/testFileUploadSecurity.js'
+    - 'scratch/*'

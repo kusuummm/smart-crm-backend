@@ -6,13 +6,23 @@ node_modules/
 .env.*
 !.env.example
 *.env
+.env.local
+.env.*.local
 
-# Certificates & Credentials
+# Certificates, Keys & Cloud Credentials
 *.pem
 *.key
 *.cert
 *.crt
 *.p12
+*.pfx
+*.pkcs12
+id_rsa*
+credentials.json
+client_secret*.json
+*.keystore
+.npmrc
+.pypirc
 
 # Logs
 logs

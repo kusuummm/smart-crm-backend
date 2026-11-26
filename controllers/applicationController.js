@@ -11,6 +11,7 @@ const fs = require('fs');
 const Application = require('../models/Application');
 const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
+const { getApplicationFee } = require('../services/pricingService');
 
 // Helper to generate application number
 const generateApplicationNumber = async () => {
@@ -190,7 +191,7 @@ const createApplication = asyncHandler(async (req, res) => {
   const {
     customerId,
     applicationType = 'membership',
-    paymentAmount = 0,
+    paymentAmount,
     paymentStatus = 'pending',
     paymentReference = '',
     remarks = '',
@@ -213,6 +214,28 @@ const createApplication = asyncHandler(async (req, res) => {
     }
   }
 
+  // Trusted Server-Side Fee Resolution & Price Tampering Rejection
+  const authoritativeFee = getApplicationFee(applicationType);
+  if (paymentAmount !== undefined && Number(paymentAmount) !== authoritativeFee) {
+    res.status(400);
+    throw new Error(
+      `Pricing calculation mismatch: Authoritative fee for ${applicationType} is ₹${authoritativeFee}, got ₹${paymentAmount}. Unauthorized pricing changes are rejected.`
+    );
+  }
+  const effectiveFee = authoritativeFee;
+
+  // Non-admins cannot mark payment completed without verified payment reference
+  let effectivePaymentStatus = 'pending';
+  if (isAdminOrOwner(req.user)) {
+    effectivePaymentStatus = paymentStatus === 'completed' ? 'completed' : 'pending';
+  } else if (paymentStatus === 'completed') {
+    if (!paymentReference || paymentReference.trim().length < 4) {
+      res.status(400);
+      throw new Error('Payment reference or transaction ID is required to mark application payment as completed.');
+    }
+    effectivePaymentStatus = 'completed';
+  }
+
   const applicationNumber = await generateApplicationNumber();
 
   const application = await Application.create({
@@ -223,10 +246,10 @@ const createApplication = asyncHandler(async (req, res) => {
     customerEmail: customer.email || '',
     applicationType,
     status: 'new',
-    paymentStatus,
-    paymentAmount: Number(paymentAmount) || 0,
+    paymentStatus: effectivePaymentStatus,
+    paymentAmount: effectiveFee,
     paymentReference,
-    paymentDate: paymentStatus === 'completed' ? new Date() : null,
+    paymentDate: effectivePaymentStatus === 'completed' ? new Date() : null,
     remarks,
     assignedTo: req.user._id,
     assignedToName: req.user.name,
@@ -235,7 +258,7 @@ const createApplication = asyncHandler(async (req, res) => {
         action: 'Application Created',
         performedBy: req.user._id,
         performedByName: req.user.name,
-        notes: `Application initiated with type ${applicationType}.`,
+        notes: `Application initiated with type ${applicationType}. Fee: ₹${effectiveFee}.`,
         date: new Date(),
       },
     ],
@@ -396,7 +419,14 @@ const updatePayment = asyncHandler(async (req, res) => {
   }
 
   if (paymentStatus) application.paymentStatus = paymentStatus;
-  if (paymentAmount !== undefined) application.paymentAmount = Number(paymentAmount) || 0;
+  if (paymentAmount !== undefined) {
+    const num = Number(paymentAmount);
+    if (isNaN(num) || num < 0) {
+      res.status(400);
+      throw new Error('Payment amount cannot be negative');
+    }
+    application.paymentAmount = num;
+  }
   if (paymentReference !== undefined) application.paymentReference = paymentReference;
   if (paymentDate) {
     application.paymentDate = new Date(paymentDate);

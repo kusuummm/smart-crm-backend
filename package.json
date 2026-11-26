@@ -11,7 +11,8 @@
     "test:email": "node utils/testEmail.js",
     "test:apis": "node utils/testAllApis.js",
     "test:emails": "node utils/testAllEmails.js",
-    "test:security": "node utils/testAccessControl.js"
+    "test:security": "node utils/testAccessControl.js && node utils/testCrossAccountIsolation.js",
+    "test:isolation": "node utils/testCrossAccountIsolation.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^7.0.0-rc14",

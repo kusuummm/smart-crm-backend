@@ -268,6 +268,16 @@ const getLeadEmails = asyncHandler(async (req, res) => {
     throw new Error('Lead not found');
   }
 
+  if (!isAdminOrOwner(req.user)) {
+    const customerIds = await getTelecallerCustomerIds(req.user);
+    const isOwner = (lead.telecallerId && String(lead.telecallerId) === String(req.user._id)) ||
+                    customerIds.some(id => String(id) === String(lead.customerId?._id || lead.customerId));
+    if (!isOwner) {
+      res.status(403);
+      throw new Error('Access denied: You cannot access emails for leads assigned to other team members');
+    }
+  }
+
   const customer = lead.customerId;
   const customerEmail = customer?.email ? customer.email.toLowerCase().trim() : null;
 
@@ -317,6 +327,18 @@ const markEmailRead = asyncHandler(async (req, res) => {
   if (!log) {
     res.status(404);
     throw new Error('Email log not found');
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const assignedCustIds = await Customer.find({
+      $or: [{ telecallerId: req.user._id }, { assignedTelecaller: req.user.name }],
+    }).distinct('_id');
+    const isOwner = (log.sentBy && String(log.sentBy) === String(req.user._id)) ||
+                    (log.customerId && assignedCustIds.some(id => String(id) === String(log.customerId)));
+    if (!isOwner) {
+      res.status(403);
+      throw new Error('Access denied: You cannot modify email logs belonging to other team members');
+    }
   }
 
   log.isRead = true;

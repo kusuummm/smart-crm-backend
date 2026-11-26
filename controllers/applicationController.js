@@ -202,6 +202,17 @@ const createApplication = asyncHandler(async (req, res) => {
     throw new Error('Customer not found');
   }
 
+  if (!isAdminOrOwner(req.user)) {
+    const isAssigned = customer && (
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name
+    );
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only create applications for contacts assigned to you');
+    }
+  }
+
   const applicationNumber = await generateApplicationNumber();
 
   const application = await Application.create({
@@ -447,6 +458,19 @@ const uploadDocument = asyncHandler(async (req, res) => {
   if (!application) {
     res.status(404);
     throw new Error('Application not found');
+  }
+
+  if (!isAdminOrOwner(req.user)) {
+    const custId = application.customerId?._id || application.customerId;
+    const customer = await Customer.findById(custId);
+    const isAssigned = customer && (
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name
+    );
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only upload documents for applications belonging to your assigned contacts');
+    }
   }
 
   // Construct accessible relative URL path

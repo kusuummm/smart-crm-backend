@@ -132,14 +132,6 @@ const updateEvent = asyncHandler(async (req, res) => {
     const customerIds = await getTelecallerCustomerIds(req.user);
     if (!customerIds.some(id => String(id) === String(event.customerId))) {
       res.status(403);
-      throw new Error('Access denied: You can only trigger reminders for your own assigned contacts');
-    }
-  }
-
-  if (!isAdminOrOwner(req.user)) {
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    if (!customerIds.some(id => String(id) === String(event.customerId))) {
-      res.status(403);
       throw new Error('Access denied: You cannot update events for other users\' contacts');
     }
   }
@@ -215,14 +207,6 @@ const deleteEvent = asyncHandler(async (req, res) => {
   if (!event) {
     res.status(404);
     throw new Error('Event not found');
-  }
-
-  if (!isAdminOrOwner(req.user)) {
-    const customerIds = await getTelecallerCustomerIds(req.user);
-    if (!customerIds.some(id => String(id) === String(event.customerId))) {
-      res.status(403);
-      throw new Error('Access denied: You can only trigger reminders for your own assigned contacts');
-    }
   }
 
   if (!isAdminOrOwner(req.user)) {

@@ -180,7 +180,9 @@ const getCallById = asyncHandler(async (req, res) => {
     throw new Error('Call record not found');
   }
 
-  if (String(call.calledBy) !== String(req.user._id)) {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  const isAdminOrManager = ['admin', 'owner', 'manager'].includes(callerRole);
+  if (!isAdminOrManager && String(call.calledBy) !== String(req.user._id)) {
     res.status(403);
     throw new Error('Access denied: You cannot access calls or call recordings belonging to another user');
   }
@@ -199,7 +201,9 @@ const updateCall = asyncHandler(async (req, res) => {
     throw new Error('Call record not found');
   }
 
-  if (String(call.calledBy) !== String(req.user._id)) {
+  const callerRole = (req.user?.role || '').toLowerCase();
+  const isAdminOrManager = ['admin', 'owner', 'manager'].includes(callerRole);
+  if (!isAdminOrManager && String(call.calledBy) !== String(req.user._id)) {
     res.status(403);
     throw new Error('Access denied: You can only update call records you initiated');
   }

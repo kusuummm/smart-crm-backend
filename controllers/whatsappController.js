@@ -453,6 +453,16 @@ const sendFollowUpReminder = asyncHandler(async (req, res) => {
     customer = await Customer.findById(customerId);
   }
 
+  if (customer && !isAdminOrOwner(req.user)) {
+    const isAssigned =
+      (customer.telecallerId && String(customer.telecallerId) === String(req.user._id)) ||
+      customer.assignedTelecaller === req.user.name;
+    if (!isAssigned) {
+      res.status(403);
+      throw new Error('Access denied: You can only send follow-up reminders to contacts assigned to you');
+    }
+  }
+
   const reminderPhone = phone || customer?.mobile || customer?.phone || customer?.alternateNumber;
   if (!reminderPhone) {
     res.status(400);

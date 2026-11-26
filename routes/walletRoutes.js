@@ -6,6 +6,8 @@ const {
   getWallet,
   createOrder,
   rechargeWallet,
+  payWithWallet,
+  getOrders,
   getTransactions,
 } = require('../controllers/walletController');
 const { protect } = require('../middleware/auth');
@@ -20,6 +22,8 @@ router.post('/calculate-pricing', calculatePricing);
 router.get('/', getWallet);
 router.post('/create-order', createOrder);
 router.post('/recharge', rechargeWallet);
+router.post('/pay-with-wallet', payWithWallet);
+router.get('/orders', getOrders);
 router.get('/transactions', getTransactions);
 
 module.exports = router;

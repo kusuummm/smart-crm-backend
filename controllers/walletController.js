@@ -205,7 +205,7 @@ const createOrder = asyncHandler(async (req, res) => {
   });
 });
 
-// @desc    Execute payment verification and wallet credit using trusted server order data
+// @desc    Execute payment verification and order fulfillment using trusted server order data
 // @route   POST /api/wallet/recharge
 // @access  Private
 const rechargeWallet = asyncHandler(async (req, res) => {
@@ -222,57 +222,43 @@ const rechargeWallet = asyncHandler(async (req, res) => {
 
   const targetOrderId = razorpay_order_id || orderId;
 
-  // 1. Retrieve the authoritative Order from database
-  let order = null;
-  if (targetOrderId) {
-    order = await Order.findOne({
-      $or: [{ orderId: targetOrderId }, { 'paymentDetails.razorpayOrderId': targetOrderId }],
-    });
+  // 1. Enforce Server Order Requirement: Direct, unverified top-ups without an authoritative Order are rejected
+  if (!targetOrderId) {
+    res.status(400);
+    throw new Error('Transaction rejected: A verified server orderId is required to complete payment');
   }
 
-  // 2. Validate Order Existence & Ownership
-  if (order) {
-    if (String(order.userId) !== String(req.user._id)) {
-      res.status(403);
-      throw new Error('Access denied: You do not have permission to execute payment on this order');
-    }
+  // 2. Retrieve the authoritative Order from database
+  const order = await Order.findOne({
+    $or: [{ orderId: targetOrderId }, { 'paymentDetails.razorpayOrderId': targetOrderId }],
+  });
 
-    if (order.status === 'paid') {
-      res.status(409);
-      throw new Error('Duplicate transaction: This order has already been verified and credited');
-    }
+  if (!order) {
+    res.status(404);
+    throw new Error(`Order not found: Order '${targetOrderId}' does not exist or has expired`);
   }
 
-  // 3. Resolve Trusted Amount (Server-side Order total takes precedence over client input)
-  let trustedAmount;
-  if (order) {
-    trustedAmount = order.pricing.total;
-    // Reject price tampering if client sent an explicit amount that contradicts the order total
-    if (amount !== undefined && Math.abs(parseFloat(amount) - trustedAmount) > 0.05) {
-      res.status(400);
-      throw new Error(
-        `Price tampering detected: Submitted amount ₹${amount} does not match verified server order total ₹${trustedAmount}. Transaction rejected.`
-      );
-    }
-  } else {
-    // If no order record exists, validate amount as direct top-up with strict boundaries
-    const parsedAmount = parseFloat(amount);
-    if (!parsedAmount || isNaN(parsedAmount) || parsedAmount <= 0) {
-      res.status(400);
-      throw new Error('Valid recharge amount is required');
-    }
-    if (parsedAmount < 10) {
-      res.status(400);
-      throw new Error('Minimum recharge amount is ₹10');
-    }
-    if (parsedAmount > 100000 && process.env.NODE_ENV !== 'production') {
-      res.status(400);
-      throw new Error('Maximum allowed single top-up is ₹100,000');
-    }
-    trustedAmount = Math.round(parsedAmount * 100) / 100;
+  // 3. Validate Order Ownership & Lifecycle Status
+  if (String(order.userId) !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('Access denied: You do not have permission to execute payment on this order');
   }
 
-  // 4. Gateway Cryptographic HMAC Verification when live Razorpay secret is present
+  if (order.status === 'paid') {
+    res.status(409);
+    throw new Error('Duplicate transaction: This order has already been verified and settled');
+  }
+
+  // 4. Resolve Trusted Amount (Strictly from order.pricing.total)
+  const trustedAmount = order.pricing.total;
+  if (amount !== undefined && Math.abs(parseFloat(amount) - trustedAmount) > 0.05) {
+    res.status(400);
+    throw new Error(
+      `Price tampering detected: Submitted amount ₹${amount} does not match verified server order total ₹${trustedAmount}. Transaction rejected.`
+    );
+  }
+
+  // 5. Gateway Cryptographic HMAC Verification when live Razorpay secret is present
   const effectivePaymentId = razorpay_payment_id || utrNumber || paymentId || `pay_${Date.now()}`;
   const razorpaySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -288,13 +274,13 @@ const rechargeWallet = asyncHandler(async (req, res) => {
     }
   }
 
-  // 5. Load or Create User Wallet
+  // 6. Load or Create User Wallet
   let wallet = await Wallet.findOne({ userId: req.user._id });
   if (!wallet) {
     wallet = new Wallet({ userId: req.user._id, balance: 0.0, transactions: [] });
   }
 
-  // 6. Prevent duplicate transaction replay attacks
+  // 7. Prevent duplicate transaction replay attacks
   const alreadyProcessed = wallet.transactions.some(
     (tx) => tx.paymentId && tx.paymentId === effectivePaymentId
   );
@@ -303,37 +289,49 @@ const rechargeWallet = asyncHandler(async (req, res) => {
     throw new Error('Duplicate transaction: This payment has already been credited to your wallet.');
   }
 
-  // 7. Execute Wallet Credit using TRUSTED AMOUNT
   const now = new Date();
   const dateStr = `${now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 
-  const newTx = {
-    amount: trustedAmount,
-    type: 'credit',
-    description: `Wallet top-up via ${paymentMethod}`,
-    paymentId: effectivePaymentId,
-    status: 'completed',
-    date: dateStr,
-    createdAt: now,
-  };
-
-  wallet.balance += trustedAmount;
-  wallet.transactions.unshift(newTx);
-  await wallet.save();
+  let newTx = null;
+  if (order.type === 'wallet_recharge') {
+    newTx = {
+      amount: trustedAmount,
+      type: 'credit',
+      description: `Wallet top-up via ${paymentMethod}`,
+      paymentId: effectivePaymentId,
+      status: 'completed',
+      date: dateStr,
+      createdAt: now,
+    };
+    wallet.balance += trustedAmount;
+    wallet.transactions.unshift(newTx);
+    await wallet.save();
+  } else {
+    // Product or plan checkout
+    newTx = {
+      amount: trustedAmount,
+      type: 'purchase',
+      description: `Payment for ${order.items.map((i) => i.name).join(', ') || 'CRM Products'}`,
+      paymentId: effectivePaymentId,
+      status: 'completed',
+      date: dateStr,
+      createdAt: now,
+    };
+    wallet.transactions.unshift(newTx);
+    await wallet.save();
+  }
 
   // 8. Mark Order as Paid
-  if (order) {
-    order.status = 'paid';
-    order.paymentDetails = {
-      paymentMethod,
-      paymentId: effectivePaymentId,
-      razorpayOrderId: razorpay_order_id || order.orderId,
-      razorpayPaymentId: razorpay_payment_id || '',
-      razorpaySignature: razorpay_signature || '',
-      paidAt: now,
-    };
-    await order.save();
-  }
+  order.status = 'paid';
+  order.paymentDetails = {
+    paymentMethod,
+    paymentId: effectivePaymentId,
+    razorpayOrderId: razorpay_order_id || order.orderId,
+    razorpayPaymentId: razorpay_payment_id || '',
+    razorpaySignature: razorpay_signature || '',
+    paidAt: now,
+  };
+  await order.save();
 
   // 9. Sync User model balance
   await User.findByIdAndUpdate(req.user._id, {
@@ -343,11 +341,101 @@ const rechargeWallet = asyncHandler(async (req, res) => {
   res.json({
     success: true,
     balance: wallet.balance,
-    amountCredited: trustedAmount,
-    message: `₹${trustedAmount.toLocaleString()} credited to your CRM wallet successfully!`,
+    amountProcessed: trustedAmount,
+    message:
+      order.type === 'wallet_recharge'
+        ? `₹${trustedAmount.toLocaleString()} credited to your CRM wallet successfully!`
+        : `Payment of ₹${trustedAmount.toLocaleString()} verified for order '${order.orderId}'.`,
     transaction: newTx,
-    order: order || null,
+    order,
     wallet,
+  });
+});
+
+// @desc    Pay for a checkout order using CRM Wallet Balance
+// @route   POST /api/wallet/pay-with-wallet
+// @access  Private
+const payWithWallet = asyncHandler(async (req, res) => {
+  const { orderId } = req.body;
+
+  if (!orderId) {
+    res.status(400);
+    throw new Error('Order ID is required to process wallet payment');
+  }
+
+  const order = await Order.findOne({ orderId });
+  if (!order) {
+    res.status(404);
+    throw new Error(`Order '${orderId}' not found`);
+  }
+
+  if (String(order.userId) !== String(req.user._id)) {
+    res.status(403);
+    throw new Error('Access denied: You do not own this order');
+  }
+
+  if (order.status === 'paid') {
+    res.status(409);
+    throw new Error('Order has already been paid and fulfilled');
+  }
+
+  const requiredAmount = order.pricing.total;
+
+  let wallet = await Wallet.findOne({ userId: req.user._id });
+  if (!wallet || wallet.balance < requiredAmount) {
+    res.status(400);
+    throw new Error(
+      `Insufficient wallet balance: Order total is ₹${requiredAmount.toFixed(2)}, but available balance is ₹${(wallet?.balance || 0).toFixed(2)}`
+    );
+  }
+
+  const now = new Date();
+  const dateStr = `${now.toLocaleDateString('en-US', { day: '2-digit', month: 'short', year: 'numeric' })}, ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+
+  // Deduct from wallet
+  wallet.balance -= requiredAmount;
+  const newTx = {
+    amount: requiredAmount,
+    type: 'debit',
+    description: `Order payment: ${order.items.map((i) => i.name).join(', ') || order.type}`,
+    paymentId: `wt_${order.orderId}`,
+    status: 'completed',
+    date: dateStr,
+    createdAt: now,
+  };
+  wallet.transactions.unshift(newTx);
+  await wallet.save();
+
+  // Mark order paid
+  order.status = 'paid';
+  order.paymentDetails = {
+    paymentMethod: 'Wallet Balance',
+    paymentId: `wt_${order.orderId}`,
+    paidAt: now,
+  };
+  await order.save();
+
+  await User.findByIdAndUpdate(req.user._id, {
+    balance: `₹${wallet.balance.toFixed(1)}`,
+  }).catch(() => {});
+
+  res.json({
+    success: true,
+    message: `Payment of ₹${requiredAmount.toFixed(2)} completed successfully using wallet balance!`,
+    balance: wallet.balance,
+    order,
+    transaction: newTx,
+  });
+});
+
+// @desc    Get user's order history with pricing details
+// @route   GET /api/wallet/orders
+// @access  Private
+const getOrders = asyncHandler(async (req, res) => {
+  const orders = await Order.find({ userId: req.user._id }).sort({ createdAt: -1 });
+  res.json({
+    success: true,
+    orders,
   });
 });
 
@@ -393,6 +481,8 @@ module.exports = {
   getWallet,
   createOrder,
   rechargeWallet,
+  payWithWallet,
+  getOrders,
   getTransactions,
 };
 

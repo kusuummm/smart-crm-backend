@@ -284,6 +284,31 @@ async function runTests() {
 
   console.log('\n--- 4. TRANSACTION INTEGRITY, TAMPERING REJECTION & IDEMPOTENCY ---');
   {
+    // Attacker attempts direct recharge without an orderId
+    const res = await request('POST', '/api/wallet/recharge', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: {
+        amount: 5000,
+        paymentMethod: 'UPI',
+        paymentId: `pay_direct_${Date.now()}`,
+      },
+    });
+    assert(res.status === 400, `Direct recharge without orderId is rejected with 400 Bad Request (got ${res.status})`);
+  }
+  {
+    // Attacker attempts recharge with fake / non-existent orderId
+    const res = await request('POST', '/api/wallet/recharge', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: {
+        orderId: 'order_non_existent_fake_123',
+        amount: 500,
+        paymentMethod: 'UPI',
+        paymentId: `pay_nonexistent_${Date.now()}`,
+      },
+    });
+    assert(res.status === 404, `Recharge with non-existent orderId is rejected with 404 Not Found (got ${res.status})`);
+  }
+  {
     // Attacker attempts to recharge with a tampered amount (sending amount: 50000 on a ₹500 order)
     const res = await request('POST', '/api/wallet/recharge', {
       headers: { Authorization: `Bearer ${aliceToken}` },
@@ -319,7 +344,7 @@ async function runTests() {
       },
     });
     assert(res.status === 200, `Legitimate recharge succeeds with 200 (got ${res.status})`);
-    assert(res.data.amountCredited === 500, `Amount credited matches trusted order total ₹500 (got ${res.data?.amountCredited})`);
+    assert(res.data.amountProcessed === 500, `Amount processed matches trusted order total ₹500 (got ${res.data?.amountProcessed})`);
 
     // Verify order marked paid in database
     const dbOrder = await Order.findOne({ orderId: validOrder.orderId });
@@ -338,7 +363,80 @@ async function runTests() {
     assert(res.status === 409, `Replay attack on completed order is rejected with 409 Conflict (got ${res.status})`);
   }
 
-  console.log('\n--- 5. APPLICATION FEE INTEGRITY ---');
+  console.log('\n--- 5. CHECKOUT ORDER FULFILLMENT & WALLET BALANCE PAYMENTS ---');
+  let addonOrder;
+  {
+    // Create an order for product checkout: lead_addon_pack (₹1,000 + 18% GST = ₹1,180)
+    const res = await request('POST', '/api/wallet/create-order', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: {
+        items: [{ productId: 'lead_addon_pack', quantity: 1 }],
+      },
+    });
+    assert(res.status === 200, `Create checkout order returns 200 (got ${res.status})`);
+    assert(res.data.pricing.total === 1180, `Checkout order total is exactly ₹1,180 (got ${res.data.pricing.total})`);
+    addonOrder = res.data;
+  }
+  {
+    // Alice currently has ₹500 in wallet, tries to pay for ₹1,180 order with wallet
+    const res = await request('POST', '/api/wallet/pay-with-wallet', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { orderId: addonOrder.orderId },
+    });
+    assert(res.status === 400, `Payment with insufficient wallet balance is rejected with 400 (got ${res.status})`);
+  }
+  {
+    // Bob attempts to pay for Alice's addon order with his wallet
+    const res = await request('POST', '/api/wallet/pay-with-wallet', {
+      headers: { Authorization: `Bearer ${bobToken}` },
+      body: { orderId: addonOrder.orderId },
+    });
+    assert(res.status === 403, `Cross-account pay-with-wallet is rejected with 403 (got ${res.status})`);
+  }
+  {
+    // Alice tops up another ₹1,000 to have sufficient balance (₹500 + ₹1,000 = ₹1,500)
+    const topupOrderRes = await request('POST', '/api/wallet/create-order', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { amount: 1000 },
+    });
+    await request('POST', '/api/wallet/recharge', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: {
+        orderId: topupOrderRes.data.orderId,
+        paymentId: `pay_topup_${Date.now()}`,
+      },
+    });
+
+    // Now Alice pays for addonOrder (₹1,180) using wallet balance
+    const payRes = await request('POST', '/api/wallet/pay-with-wallet', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { orderId: addonOrder.orderId },
+    });
+    assert(payRes.status === 200, `Pay order with sufficient wallet balance succeeds with 200 (got ${payRes.status})`);
+    assert(payRes.data.balance === 320, `Wallet balance correctly debited from ₹1,500 to ₹320 (got ${payRes.data.balance})`);
+
+    const dbAddonOrder = await Order.findOne({ orderId: addonOrder.orderId });
+    assert(dbAddonOrder.status === 'paid', `Addon order status transitioned to 'paid'`);
+    assert(dbAddonOrder.paymentDetails.paymentMethod === 'Wallet Balance', `Payment method recorded as Wallet Balance`);
+  }
+  {
+    // Replay attack on pay-with-wallet for already fulfilled order
+    const res = await request('POST', '/api/wallet/pay-with-wallet', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+      body: { orderId: addonOrder.orderId },
+    });
+    assert(res.status === 409, `Replay pay-with-wallet on paid order is rejected with 409 Conflict (got ${res.status})`);
+  }
+  {
+    // Query order history
+    const res = await request('GET', '/api/wallet/orders', {
+      headers: { Authorization: `Bearer ${aliceToken}` },
+    });
+    assert(res.status === 200, `GET /api/wallet/orders returns 200 (got ${res.status})`);
+    assert(Array.isArray(res.data.orders) && res.data.orders.length >= 2, `Alice receives her order history`);
+  }
+
+  console.log('\n--- 6. APPLICATION FEE INTEGRITY ---');
   {
     // Member creates application for 'membership' (Trusted fee is ₹500)
     const res = await request('POST', '/api/applications', {

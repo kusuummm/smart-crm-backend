@@ -12,6 +12,7 @@ const Application = require('../models/Application');
 const Customer = require('../models/Customer');
 const Lead = require('../models/Lead');
 const { getApplicationFee } = require('../services/pricingService');
+const { resolveSafeFilePath } = require('../utils/fileSecurity');
 
 // Helper to generate application number
 const generateApplicationNumber = async () => {
@@ -510,7 +511,7 @@ const uploadDocument = asyncHandler(async (req, res) => {
     name,
     type,
     fileUrl,
-    fileName: req.file.originalname,
+    fileName: req.file.sanitizedOriginalName || req.file.originalname,
     fileSize: req.file.size,
     fileMime: req.file.mimetype,
     status: 'submitted',
@@ -650,14 +651,20 @@ const deleteDocument = asyncHandler(async (req, res) => {
     throw new Error('Document not found');
   }
 
-  // Remove file from disk safely
+  // Remove file from disk safely with directory traversal containment
   if (doc.fileUrl && doc.fileUrl.startsWith('/uploads/')) {
-    const filePath = path.join(__dirname, '..', doc.fileUrl);
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-      } catch (err) {
-        console.warn('Could not remove file from disk:', err.message);
+    const uploadBase = path.resolve(__dirname, '..', 'uploads');
+    const relativePath = doc.fileUrl.replace(/^\/uploads\/?/, '');
+    const parts = relativePath.split('/');
+    if (parts.length >= 2) {
+      const categoryDir = path.join(uploadBase, parts[0]);
+      const safePath = resolveSafeFilePath(categoryDir, parts[1]);
+      if (safePath && fs.existsSync(safePath)) {
+        try {
+          fs.unlinkSync(safePath);
+        } catch (err) {
+          console.warn('Could not remove file from disk:', err.message);
+        }
       }
     }
   }
@@ -712,7 +719,7 @@ const uploadCertificate = asyncHandler(async (req, res) => {
     certificateNumber: certNum,
     title,
     fileUrl,
-    fileName: req.file.originalname,
+    fileName: req.file.sanitizedOriginalName || req.file.originalname,
     issuedDate: issuedDate ? new Date(issuedDate) : new Date(),
     uploadedAt: new Date(),
     uploadedBy: req.user._id,
@@ -772,13 +779,19 @@ const deleteCertificate = asyncHandler(async (req, res) => {
     throw new Error('Application not found');
   }
 
-  if (application.finalCertificate?.fileUrl) {
-    const filePath = path.join(__dirname, '..', application.finalCertificate.fileUrl);
-    if (fs.existsSync(filePath)) {
-      try {
-        fs.unlinkSync(filePath);
-      } catch (err) {
-        console.warn('Could not remove certificate file:', err.message);
+  if (application.finalCertificate?.fileUrl && application.finalCertificate.fileUrl.startsWith('/uploads/')) {
+    const uploadBase = path.resolve(__dirname, '..', 'uploads');
+    const relativePath = application.finalCertificate.fileUrl.replace(/^\/uploads\/?/, '');
+    const parts = relativePath.split('/');
+    if (parts.length >= 2) {
+      const categoryDir = path.join(uploadBase, parts[0]);
+      const safePath = resolveSafeFilePath(categoryDir, parts[1]);
+      if (safePath && fs.existsSync(safePath)) {
+        try {
+          fs.unlinkSync(safePath);
+        } catch (err) {
+          console.warn('Could not remove certificate file:', err.message);
+        }
       }
     }
   }

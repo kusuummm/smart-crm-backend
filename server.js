@@ -298,40 +298,15 @@ app.use(['/api/rewards', '/rewards'], rewardRoutes);
 // AI Integrations, Copilot & Least-Privilege Tool Execution
 app.use(['/api/ai', '/ai'], aiRoutes);
 
-// Protected uploads directory - verifies authentication to guard KYC documents & certificates
-const jwt = require('jsonwebtoken');
-app.use('/uploads', (req, res, next) => {
-  if (process.env.NODE_ENV === 'test') {
-    return next();
-  }
-
-  let token = null;
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  } else if (req.query && req.query.token) {
-    token = req.query.token;
-  } else if (req.cookies && req.cookies.token) {
-    token = req.cookies.token;
-  }
-
-  if (!token) {
-    return res.status(401).json({
-      success: false,
-      message: 'Access denied: Authentication required to view documents.',
-    });
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(401).json({
-      success: false,
-      message: 'Access denied: Invalid or expired access token.',
-    });
-  }
-}, express.static(path.join(__dirname, 'uploads')));
+// Secure uploads endpoint - verifies authentication, object-level access control & defensive headers
+const { serveSecureUpload } = require('./controllers/fileController');
+app.get('/uploads/:category/:filename', serveSecureUpload);
+app.all(['/uploads', '/uploads/:category'], (req, res) => {
+  res.status(403).json({
+    success: false,
+    message: 'Directory listing prohibited',
+  });
+});
 
 
 // ================= ERROR HANDLING =================

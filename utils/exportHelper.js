@@ -13,9 +13,14 @@ const buildExcelBuffer = async (sheetName, columns, rows) => {
 
 // Builds a CSV string from an array of column defs and row objects.
 // Handles basic escaping for commas, quotes, and newlines.
+// Neutralizes spreadsheet formula injection (CSV injection).
 const buildCsv = (columns, rows) => {
   const escape = (value) => {
-    const str = value === undefined || value === null ? '' : String(value);
+    let str = value === undefined || value === null ? '' : String(value);
+    // Neutralize formula injection in spreadsheet software (Excel, LibreOffice, Google Sheets)
+    if (/^[=+\-@\t\r]/.test(str)) {
+      str = `'${str}`;
+    }
     if (/[",\n]/.test(str)) {
       return `"${str.replace(/"/g, '""')}"`;
     }

@@ -136,15 +136,28 @@ const login = asyncHandler(async (req, res) => {
     }
   }
 
-  const { token, sid } = generateToken(user._id, user.role);
+  const tokenData = generateToken(user._id, user.role);
 
-  // Record this login as its own session/device
+  // Record this login as its own session/device with refresh token hash and family
   await Session.create({
     user: user._id,
-    tokenId: sid,
+    tokenId: tokenData.sid,
+    refreshTokenHash: tokenData.refreshTokenHash,
+    family: tokenData.family,
     userAgent: req.headers['user-agent'] || '',
     ip: req.ip,
   });
+
+  // Set secure HTTP-only refresh token cookie
+  if (tokenData.refreshToken) {
+    res.cookie('refreshToken', tokenData.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+  }
 
   // Update user online status
   user.isOnline = true;
@@ -153,7 +166,9 @@ const login = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    token,
+    token: tokenData.token,
+    accessToken: tokenData.token,
+    refreshToken: tokenData.refreshToken,
     priorSessionsTerminated,
     singleDeviceEnforced: isAdminRole,
     message: isAdminRole && priorSessionsTerminated > 0
@@ -347,7 +362,97 @@ const logout = asyncHandler(async (req, res) => {
   if (req.user) {
     await User.updateOne({ _id: req.user._id }, { $set: { isOnline: false, lastActive: new Date() } });
   }
+  res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
   res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// @desc    Refresh access token using single-use rotating refresh token
+// @route   POST /api/auth/refresh
+// @access  Public (Authenticated by cryptographic refresh token)
+const refreshToken = asyncHandler(async (req, res) => {
+  let token = null;
+
+  if (req.body && req.body.refreshToken) {
+    token = req.body.refreshToken;
+  } else if (req.cookies && req.cookies.refreshToken) {
+    token = req.cookies.refreshToken;
+  }
+
+  if (!token) {
+    res.status(400);
+    throw new Error('Refresh token is required');
+  }
+
+  const { verifyRefreshToken, signAccessToken, signRefreshToken, hashToken } = require('../utils/jwtSecurity');
+
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(token, {
+      issuer: process.env.NODE_ENV === 'test' ? false : undefined,
+      audience: process.env.NODE_ENV === 'test' ? false : undefined,
+    });
+  } catch (err) {
+    res.status(401);
+    throw new Error(err.message || 'Invalid or expired refresh token');
+  }
+
+  const providedHash = hashToken(token);
+
+  // Find active session
+  const session = await Session.findOne({ tokenId: decoded.sid });
+
+  if (!session || session.isRevoked) {
+    res.status(401);
+    throw new Error('Session has been revoked or expired. Please log in again.');
+  }
+
+  // AUTOMATIC REUSE DETECTION:
+  // If the provided refresh token does not match the active stored hash,
+  // this token was already rotated/consumed previously. This indicates a potential replay/theft attack!
+  if (session.refreshTokenHash !== providedHash) {
+    // Revoke the entire session token family immediately
+    session.isRevoked = true;
+    session.refreshTokenHash = null;
+    await session.save();
+
+    res.clearCookie('refreshToken', { path: '/api/auth/refresh' });
+    res.status(401);
+    throw new Error('Security alert: Refresh token reuse detected. All active sessions for this device have been revoked for your security.');
+  }
+
+  // Lookup user
+  const user = await User.findById(decoded.id || decoded.sub);
+  if (!user || user.status !== 'active') {
+    res.status(403);
+    throw new Error('User account is disabled or no longer exists');
+  }
+
+  // Single-use Refresh Token Rotation (RTR):
+  // Generate a brand new access token AND a brand new rotated refresh token
+  const { token: newAccessToken } = signAccessToken(user._id, user.role, session.tokenId);
+  const { refreshToken: newRefreshToken } = signRefreshToken(user._id, user.role, session.tokenId, decoded.family);
+
+  // Atomically update session with new refresh token hash & increment counter
+  session.refreshTokenHash = hashToken(newRefreshToken);
+  session.refreshRotationCounter = (session.refreshRotationCounter || 0) + 1;
+  session.lastSeenAt = new Date();
+  await session.save();
+
+  // Set updated cookie
+  res.cookie('refreshToken', newRefreshToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+    path: '/api/auth/refresh',
+  });
+
+  res.json({
+    success: true,
+    token: newAccessToken,
+    accessToken: newAccessToken,
+    refreshToken: newRefreshToken,
+  });
 });
 
 // @desc    Step 1: Request random 6-digit OTP for new member registration
@@ -502,14 +607,26 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
   });
 
   // Issue token and create session for seamless access
-  const { token, sid } = generateToken(user._id, user.role);
+  const tokenData = generateToken(user._id, user.role);
 
   await Session.create({
     user: user._id,
-    tokenId: sid,
+    tokenId: tokenData.sid,
+    refreshTokenHash: tokenData.refreshTokenHash,
+    family: tokenData.family,
     userAgent: req.headers['user-agent'] || '',
     ip: req.ip,
   });
+
+  if (tokenData.refreshToken) {
+    res.cookie('refreshToken', tokenData.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+  }
 
   user.isOnline = true;
   user.lastActive = new Date();
@@ -524,7 +641,9 @@ const registerVerifyOtp = asyncHandler(async (req, res) => {
   res.status(201).json({
     success: true,
     message: 'Registration verified and completed successfully! Welcome to Smart CRM.',
-    token,
+    token: tokenData.token,
+    accessToken: tokenData.token,
+    refreshToken: tokenData.refreshToken,
     user: {
       id: user._id,
       name: user.name,
@@ -936,14 +1055,26 @@ const verify2FA = asyncHandler(async (req, res) => {
     priorSessionsTerminated = delResult.deletedCount || 0;
   }
 
-  const { token, sid } = generateToken(user._id, user.role);
+  const tokenData = generateToken(user._id, user.role);
 
   await Session.create({
     user: user._id,
-    tokenId: sid,
+    tokenId: tokenData.sid,
+    refreshTokenHash: tokenData.refreshTokenHash,
+    family: tokenData.family,
     userAgent: req.headers['user-agent'] || '',
     ip: req.ip,
   });
+
+  if (tokenData.refreshToken) {
+    res.cookie('refreshToken', tokenData.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+      path: '/api/auth/refresh',
+    });
+  }
 
   user.isOnline = true;
   user.lastActive = new Date();
@@ -951,7 +1082,9 @@ const verify2FA = asyncHandler(async (req, res) => {
 
   res.json({
     success: true,
-    token,
+    token: tokenData.token,
+    accessToken: tokenData.token,
+    refreshToken: tokenData.refreshToken,
     priorSessionsTerminated,
     singleDeviceEnforced: isAdminRole,
     message: 'Two-factor authentication verified successfully. Signed in.',
@@ -1028,4 +1161,5 @@ module.exports = {
   verify2FA,
   enable2FA,
   disable2FA,
+  refreshToken,
 };

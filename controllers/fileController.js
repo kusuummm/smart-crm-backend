@@ -11,6 +11,7 @@
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const { verifyAccessToken } = require('../utils/jwtSecurity');
 const Application = require('../models/Application');
 const Customer = require('../models/Customer');
 const { resolveSafeFilePath, ALLOWED_FILE_TYPES } = require('../utils/fileSecurity');
@@ -68,7 +69,10 @@ const serveSecureUpload = async (req, res) => {
 
   let user;
   try {
-    user = jwt.verify(token, process.env.JWT_SECRET);
+    user = verifyAccessToken(token, {
+      issuer: process.env.NODE_ENV === 'test' ? false : undefined,
+      audience: process.env.NODE_ENV === 'test' ? false : undefined,
+    });
     req.user = user;
   } catch (err) {
     return res.status(401).json({

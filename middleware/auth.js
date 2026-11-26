@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const asyncHandler = require('express-async-handler');
 const User = require('../models/User');
 const Session = require('../models/Session');
+const { verifyAccessToken } = require('../utils/jwtSecurity');
 
 // Verifies the JWT sent in the Authorization header and attaches the user to req.user
 const protect = asyncHandler(async (req, res, next) => {
@@ -17,8 +18,9 @@ const protect = asyncHandler(async (req, res, next) => {
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id);
+    // Cryptographically verify token signature, expiration, algorithm allowlist (HS256), and access purpose
+    const decoded = verifyAccessToken(token);
+    const user = await User.findById(decoded.id || decoded.sub);
 
     if (!user) {
       res.status(401);
@@ -44,7 +46,7 @@ const protect = asyncHandler(async (req, res, next) => {
     // another device (Single-device policy for Admin enforcement).
     if (decoded.sid) {
       const session = await Session.findOneAndUpdate(
-        { tokenId: decoded.sid },
+        { tokenId: decoded.sid, isRevoked: { $ne: true } },
         { lastSeenAt: new Date() }
       );
       if (!session) {

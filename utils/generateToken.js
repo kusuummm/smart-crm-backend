@@ -1,14 +1,31 @@
-const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const {
+  signAccessToken,
+  signRefreshToken,
+  hashToken,
+} = require('./jwtSecurity');
 
-// Generates a signed JWT containing the user's id, role, and a unique
-// session id (sid). The sid is what lets us list/revoke individual
-// device sessions later - see models/Session.js and middleware/auth.js.
-const generateToken = (userId, role, sid = crypto.randomUUID()) => {
-  const token = jwt.sign({ id: userId, role, sid }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  });
-  return { token, sid };
+/**
+ * Generates both an access token and a refresh token for authenticated sessions.
+ * Access token: Short-lived (15m), carries user id, role, sid, type: 'access'.
+ * Refresh token: Long-lived (7d), carries user id, role, sid, family, type: 'refresh'.
+ * Returns both tokens, sid, family, and token hash for Session persistence.
+ */
+const generateToken = (userId, role, sid = crypto.randomUUID(), family = null) => {
+  const sessionFamily = family || crypto.randomUUID();
+  const { token, jti: accessJti } = signAccessToken(userId, role, sid);
+  const { refreshToken, jti: refreshJti } = signRefreshToken(userId, role, sid, sessionFamily);
+
+  return {
+    token,
+    accessToken: token,
+    refreshToken,
+    sid,
+    family: sessionFamily,
+    accessJti,
+    refreshJti,
+    refreshTokenHash: hashToken(refreshToken),
+  };
 };
 
 module.exports = generateToken;

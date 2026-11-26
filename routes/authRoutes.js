@@ -18,6 +18,7 @@ const {
   verify2FA,
   enable2FA,
   disable2FA,
+  refreshToken,
 } = require('../controllers/authController');
 const { protect } = require('../middleware/auth');
 const { authLimiter } = require('../middleware/rateLimiter');
@@ -30,6 +31,7 @@ router.post('/register/verify-otp', authLimiter, registerVerifyOtp);
 router.post('/forgot-password/send-otp', authLimiter, forgotPasswordSendOtp);
 router.post('/forgot-password/verify-reset', authLimiter, forgotPasswordVerifyReset);
 router.post('/2fa/verify', authLimiter, verify2FA);
+router.post('/refresh', authLimiter, refreshToken);
 
 // Private User Account & Session Management
 router.get('/me', protect, getMe);

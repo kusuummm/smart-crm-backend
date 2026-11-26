@@ -9,6 +9,11 @@ const sessionSchema = new mongoose.Schema(
   {
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     tokenId: { type: String, required: true, unique: true },
+    refreshTokenHash: { type: String, default: null, index: true },
+    family: { type: String, default: null, index: true },
+    refreshRotationCounter: { type: Number, default: 0 },
+    isRevoked: { type: Boolean, default: false },
+    expiresAt: { type: Date, default: null },
     userAgent: { type: String, default: '' },
     ip: { type: String, default: '' },
     lastSeenAt: { type: Date, default: Date.now },

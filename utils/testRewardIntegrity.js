@@ -266,6 +266,10 @@ async function runTests() {
 
   console.log('\n--- 2. CONCURRENT COUPON REDEMPTION RACE CONDITION TEST ---');
   {
+    await Coupon.deleteMany({ code: 'RACE_COUPON_1' });
+    await Redemption.deleteMany({ couponCode: 'RACE_COUPON_1' });
+    await User.deleteMany({ email: /^race_user_/ });
+
     // Create a flash coupon with usageLimit: 1 (strictly ONE redemption globally)
     const now = new Date();
     const nextMonth = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
